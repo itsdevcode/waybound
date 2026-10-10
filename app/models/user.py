@@ -11,6 +11,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.profile import Profile
+    from app.models.quest import Quest
 
 class User(Base):
     __tablename__ = "users"
@@ -46,4 +47,8 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    quests: Mapped[list["Quest"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
