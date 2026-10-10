@@ -438,7 +438,8 @@ async def test_concurrent_verification_attempts(client: AsyncClient, test_user: 
         return_exceptions=True,
     )
 
-    statuses = [r.status_code for r in results if not isinstance(r, Exception)]
+    from httpx import Response
+    statuses = [r.status_code for r in results if isinstance(r, Response)]
     # Exactly one must succeed (200), and the other must be 409 conflict
     assert 200 in statuses
     assert 409 in statuses

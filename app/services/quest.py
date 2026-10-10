@@ -237,10 +237,10 @@ class QuestService:
             raise QuestError("Coordinates must be valid finite numbers", status_code=422)
 
         # Ensure transaction is active and lock rows atomically
-        in_nested = self.session.in_transaction()
-        tx_context = self.session.begin_nested() if in_nested else self.session.begin()
+        if not self.session.in_transaction():
+            await self.session.begin()
 
-        async with tx_context:
+        try:
             quest = await self.quest_repo.get_by_id(quest_id, with_for_update=True)
             if not quest:
                 raise QuestNotFoundError(f"Quest {quest_id} not found")
@@ -304,7 +304,10 @@ class QuestService:
             await self.session.refresh(quest, ["steps"])
             await self.session.refresh(profile)
 
-        await self.session.commit()
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
         # Re-fetch quest with steps eagerly to ensure no expired attributes
         refreshed_quest = await self.quest_repo.get_by_id(quest_id)
