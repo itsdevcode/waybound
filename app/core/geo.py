@@ -18,6 +18,14 @@ def calculate_haversine_distance_meters(
         if not math.isfinite(val):
             raise ValueError("Geographic coordinates must be finite real numbers.")
 
+    for lat in (lat1, lat2):
+        if not (-90.0 <= lat <= 90.0):
+            raise ValueError(f"Latitude must be between -90 and 90 degrees, got {lat}.")
+
+    for lon in (lon1, lon2):
+        if not (-180.0 <= lon <= 180.0):
+            raise ValueError(f"Longitude must be between -180 and 180 degrees, got {lon}.")
+
     r = 6_371_000.0  # Earth's mean radius in meters
 
     phi1 = math.radians(lat1)

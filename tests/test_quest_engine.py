@@ -23,6 +23,20 @@ def test_haversine_invalid_coordinates():
     with pytest.raises(ValueError, match="Geographic coordinates must be finite real numbers."):
         calculate_haversine_distance_meters(float("nan"), 0.0, 10.0, 20.0)
 
+    # Out-of-range latitude tests (< -90 or > 90)
+    with pytest.raises(ValueError, match="Latitude must be between -90 and 90 degrees"):
+        calculate_haversine_distance_meters(91.0, 0.0, 10.0, 20.0)
+
+    with pytest.raises(ValueError, match="Latitude must be between -90 and 90 degrees"):
+        calculate_haversine_distance_meters(0.0, 0.0, -90.5, 20.0)
+
+    # Out-of-range longitude tests (< -180 or > 180)
+    with pytest.raises(ValueError, match="Longitude must be between -180 and 180 degrees"):
+        calculate_haversine_distance_meters(0.0, 181.0, 10.0, 20.0)
+
+    with pytest.raises(ValueError, match="Longitude must be between -180 and 180 degrees"):
+        calculate_haversine_distance_meters(0.0, 0.0, 10.0, -180.1)
+
 
 def test_level_calculation_formula():
     assert calculate_profile_level(0) == 1
@@ -45,7 +59,7 @@ async def test_quest_generation(client: AsyncClient, test_user: User):
     assert response.status_code == 201
     data = response.json()
     assert data["status"] == "draft"
-    assert data["title"].startswith("[Demo] The")
+    assert data["title"].startswith("[Simulated Demo] The")
     assert data["estimated_minutes"] == 30
     assert data["reward_xp"] > 0
     # Clues are not yet unlocked in draft
@@ -428,3 +442,9 @@ async def test_concurrent_verification_attempts(client: AsyncClient, test_user: 
     # Exactly one must succeed (200), and the other must be 409 conflict
     assert 200 in statuses
     assert 409 in statuses
+
+    # Regression check: verify profile XP was incremented exactly once
+    prof_res = await client.get(f"/api/v1/users/{test_user.id}/profile")
+    assert prof_res.status_code == 200
+    expected_xp = gen_res.json()["reward_xp"]
+    assert prof_res.json()["xp"] == expected_xp

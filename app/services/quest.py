@@ -313,7 +313,7 @@ class QuestService:
 
         return QuestVerificationResponse(
             success=True,
-            message="Quest verified successfully! You have unlocked the destination details.",
+            message="[Simulated Demo] Quest verified successfully in simulation mode. Destination details unlocked. (Notice: Simulated test scenario, not field-verified outdoor exploration).",
             reward_xp_awarded=awarded_xp,
             total_xp=profile.xp,
             level=profile.level,

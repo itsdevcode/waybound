@@ -42,6 +42,11 @@ def get_quest_service(
     )
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def handle_service_error(e: Exception) -> HTTPException:
     if isinstance(e, QuestNotFoundError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
@@ -51,9 +56,13 @@ def handle_service_error(e: Exception) -> HTTPException:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message)
     if isinstance(e, QuestError):
         return HTTPException(status_code=e.status_code, detail=e.message)
-    import traceback
-    traceback.print_exc()
-    return HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    
+    # Safe error response: log internally, never leak raw exception details or stacktraces to clients
+    logger.exception("Internal server error occurred while processing quest request: %s", e)
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="An internal server error occurred. Please try again later.",
+    )
 
 
 @router.post(

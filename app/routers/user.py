@@ -39,6 +39,11 @@ def get_quest_service(
     )
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 @router.get(
     "/{user_id}/profile",
     response_model=ProfileResponse,
@@ -53,6 +58,12 @@ async def get_user_profile(
         return await service.get_profile(user_id)
     except UserNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except Exception as e:
+        logger.exception("Unexpected error fetching user profile: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal server error occurred. Please try again later.",
+        )
 
 
 @router.get(
@@ -69,3 +80,9 @@ async def get_user_quests(
         return await service.list_user_quests(user_id)
     except UserNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except Exception as e:
+        logger.exception("Unexpected error fetching user quests: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal server error occurred. Please try again later.",
+        )
