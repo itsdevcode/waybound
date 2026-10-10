@@ -17,6 +17,8 @@ class QuestCreateRequest(BaseModel):
     available_minutes: AvailableMinutesType
     explorer_type: ExplorerType
     difficulty: DifficultyType
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0, description="Explorer current latitude")
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0, description="Explorer current longitude")
 
 
 class QuestVerifyRequest(BaseModel):

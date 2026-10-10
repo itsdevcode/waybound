@@ -13,7 +13,9 @@ from app.schemas.quest import (
     QuestVerificationResponse,
     QuestVerifyRequest,
 )
-from app.services.providers.demo import DemoQuestProvider
+from app.services.providers.factory import create_quest_provider
+from app.services.providers.gemma import GemmaProviderError
+from app.services.places import GooglePlacesError
 from app.services.quest import (
     QuestConflictError,
     QuestError,
@@ -33,7 +35,7 @@ def get_quest_service(
 ) -> QuestService:
     quest_repo = QuestRepository(session)
     user_repo = UserRepository(session)
-    provider = DemoQuestProvider()
+    provider = create_quest_provider()
     return QuestService(
         session=session,
         quest_repository=quest_repo,
@@ -56,6 +58,12 @@ def handle_service_error(e: Exception) -> HTTPException:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message)
     if isinstance(e, QuestError):
         return HTTPException(status_code=e.status_code, detail=e.message)
+    if isinstance(e, GemmaProviderError):
+        return HTTPException(status_code=e.status_code, detail=e.message)
+    if isinstance(e, GooglePlacesError):
+        return HTTPException(status_code=e.status_code, detail=e.message)
+    if isinstance(e, ValueError):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
     # Safe error response: log internally, never leak raw exception details or stacktraces to clients
     logger.exception("Internal server error occurred while processing quest request: %s", e)
