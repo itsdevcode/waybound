@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
 
     database_url: str = ""
+    verification_radius_meters: float = 100.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
