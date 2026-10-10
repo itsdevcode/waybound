@@ -8,7 +8,7 @@ from app.repositories.quest import QuestRepository
 from app.repositories.user import UserRepository
 from app.schemas.quest import QuestResponse
 from app.schemas.user import ProfileResponse
-from app.services.providers.demo import DemoQuestProvider
+from app.services.providers.factory import create_quest_provider
 from app.services.quest import QuestService, UserNotFoundError
 from app.services.user import UserService
 
@@ -30,7 +30,14 @@ def get_quest_service(
 ) -> QuestService:
     quest_repo = QuestRepository(session)
     user_repo = UserRepository(session)
-    provider = DemoQuestProvider()
+    try:
+        provider = create_quest_provider()
+    except Exception as e:
+        logger.error("Configuration or provider error in user service: %s", type(e).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error. Please contact administrator.",
+        )
     return QuestService(
         session=session,
         quest_repository=quest_repo,

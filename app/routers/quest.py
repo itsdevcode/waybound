@@ -13,7 +13,9 @@ from app.schemas.quest import (
     QuestVerificationResponse,
     QuestVerifyRequest,
 )
-from app.services.providers.demo import DemoQuestProvider
+from app.services.providers.factory import create_quest_provider
+from app.services.providers.gemma import GemmaProviderError
+from app.services.places import GooglePlacesError
 from app.services.quest import (
     QuestConflictError,
     QuestError,
@@ -33,7 +35,10 @@ def get_quest_service(
 ) -> QuestService:
     quest_repo = QuestRepository(session)
     user_repo = UserRepository(session)
-    provider = DemoQuestProvider()
+    try:
+        provider = create_quest_provider()
+    except Exception as e:
+        raise handle_service_error(e)
     return QuestService(
         session=session,
         quest_repository=quest_repo,
@@ -56,9 +61,39 @@ def handle_service_error(e: Exception) -> HTTPException:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message)
     if isinstance(e, QuestError):
         return HTTPException(status_code=e.status_code, detail=e.message)
+    if isinstance(e, GemmaProviderError):
+        return HTTPException(status_code=e.status_code, detail=e.message)
+    if isinstance(e, GooglePlacesError):
+        return HTTPException(status_code=e.status_code, detail=e.message)
+    if isinstance(e, ValueError):
+        # Log the internal details safely on the server side
+        logger.warning("Validation error in quest service: %s", type(e).__name__)
+        err_msg = str(e)
+        # Check if the ValueError represents an internal server configuration issue
+        if "GOOGLE_MAPS_API_KEY" in err_msg or "quest_provider" in err_msg or "configured" in err_msg:
+            logger.error("Configuration error encountered: %s", err_msg)
+            return HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Server configuration error. Please contact administrator.",
+            )
+        # For known client input validation issues (e.g. coordinates, radius bounds)
+        if "radius" in err_msg.lower():
+            return HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid search radius specified.",
+            )
+        if "coordinates" in err_msg.lower() or "latitude" in err_msg.lower() or "longitude" in err_msg.lower():
+            return HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid geographic coordinates provided.",
+            )
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid request parameters provided.",
+        )
     
-    # Safe error response: log internally, never leak raw exception details or stacktraces to clients
-    logger.exception("Internal server error occurred while processing quest request: %s", e)
+    # Safe error response: log internally, never leak raw exception details, URLs, keys, or stacktraces
+    logger.exception("Internal server error occurred while processing quest request: %s", type(e).__name__)
     return HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="An internal server error occurred. Please try again later.",

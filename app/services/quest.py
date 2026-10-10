@@ -269,7 +269,9 @@ class QuestService:
                     status_code=400,
                 )
 
-            # Check observation answer (case-insensitive trimmed comparison against trusted rule)
+            is_simulation = quest.destination_name.startswith("[Simulated Demo]")
+
+            # Check observation answer (case-insensitive trimmed comparison)
             normalized_answer = request.observation_answer.strip().lower()
             expected_answer = quest.verification_answer.strip().lower()
 
@@ -280,7 +282,7 @@ class QuestService:
                     status_code=400,
                 )
 
-            # Verification succeeded! Complete quest and award XP exactly once
+            # Verification succeeded! Complete quest
             quest.status = "completed"
             quest.completed_at = datetime.now(timezone.utc)
 
@@ -296,9 +298,18 @@ class QuestService:
             if not profile:
                 raise UserNotFoundError("Explorer profile not found for quest owner")
 
-            awarded_xp = quest.reward_xp
-            profile.xp += awarded_xp
-            profile.level = calculate_profile_level(profile.xp)
+            # Real-world verification safety:
+            # Simulated demo quests are eligible for XP under verified simulation rules.
+            # Real-world Google Places + Gemma quests award 0 XP while AI-generated observation answers
+            # remain unverified, ensuring no progression XP is awarded based on unverified ground truth.
+            if is_simulation:
+                awarded_xp = quest.reward_xp
+            else:
+                awarded_xp = 0
+
+            if awarded_xp > 0:
+                profile.xp += awarded_xp
+                profile.level = calculate_profile_level(profile.xp)
 
             await self.session.flush()
             await self.session.refresh(quest, ["steps"])
@@ -314,9 +325,20 @@ class QuestService:
         if not refreshed_quest:
             raise QuestNotFoundError(f"Quest {quest_id} not found")
 
+        if is_simulation:
+            completion_message = (
+                "[Simulated Demo] Quest verified successfully in simulation mode. Destination details unlocked. "
+                "(Notice: Simulated test scenario, not field-verified outdoor exploration)."
+            )
+        else:
+            completion_message = (
+                "Quest completed and destination unlocked! Notice: Real-world progression XP is withheld pending "
+                "field-verified observation ground truth."
+            )
+
         return QuestVerificationResponse(
             success=True,
-            message="[Simulated Demo] Quest verified successfully in simulation mode. Destination details unlocked. (Notice: Simulated test scenario, not field-verified outdoor exploration).",
+            message=completion_message,
             reward_xp_awarded=awarded_xp,
             total_xp=profile.xp,
             level=profile.level,
