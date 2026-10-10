@@ -74,8 +74,7 @@ class GemmaQuestProvider(QuestProvider):
         candidates: list[PlaceCandidate],
     ) -> str:
         candidate_list_text = "\n".join([
-            f"- place_id: \"{c.place_id}\", name: \"{c.name}\", type: \"{c.primary_type}\", "
-            f"address: \"{c.address or 'N/A'}\", distance: {c.distance_meters or 0}m"
+            f"- place_id: \"{c.place_id}\", name: \"{c.name}\", type: \"{c.primary_type}\", address: \"{c.address or 'N/A'}\", distance: {c.distance_meters or 0}m"
             for c in candidates
         ])
 
@@ -136,9 +135,9 @@ Return ONLY a valid JSON object with this exact structure:
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError as e:
-            logger.error("Failed to decode JSON from Gemma output: %s\nRaw output: %s", e, raw_text)
+            logger.error("Failed to decode JSON from Gemma output: %s", type(e).__name__)
             raise GemmaProviderError(
-                f"Gemma model returned invalid JSON structure: {str(e)}", status_code=502
+                "Gemma model returned invalid JSON structure", status_code=502
             )
 
     async def _call_gemma_api(self, prompt: str) -> str:
@@ -155,6 +154,7 @@ Return ONLY a valid JSON object with this exact structure:
         is_google_api = "generativelanguage.googleapis.com" in self.base_url
 
         if is_google_api:
+            # Query parameter authentication for Google Generative Language
             url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
@@ -189,14 +189,13 @@ Return ONLY a valid JSON object with this exact structure:
 
                 if response.status_code != 200:
                     logger.warning(
-                        "Gemma API attempt %d returned HTTP %d: %s",
+                        "Gemma API attempt %d returned HTTP error status %d",
                         attempt,
                         response.status_code,
-                        response.text[:300],
                     )
                     if response.status_code in (401, 403):
                         raise GemmaProviderError(
-                            f"Gemma API authentication failed (HTTP {response.status_code})",
+                            "Gemma API authentication failed",
                             status_code=502,
                         )
                     if response.status_code >= 500 or response.status_code == 429:
@@ -222,11 +221,11 @@ Return ONLY a valid JSON object with this exact structure:
                     return choices[0].get("message", {}).get("content", "")
 
             except (httpx.TimeoutException, httpx.RequestError) as e:
-                logger.warning("Gemma API attempt %d connection error: %s", attempt, e)
+                logger.warning("Gemma API attempt %d connection error: %s", attempt, type(e).__name__)
                 last_error = e
 
         raise GemmaProviderError(
-            f"Gemma API request failed after {self.max_retries} attempts: {str(last_error)}",
+            f"Gemma API request failed after {self.max_retries} attempts",
             status_code=504,
         )
 
@@ -263,23 +262,26 @@ Return ONLY a valid JSON object with this exact structure:
         try:
             structured = GemmaQuestStructuredOutput.model_validate(parsed_data)
         except ValidationError as e:
-            logger.error("Pydantic validation failed for Gemma output: %s", e)
+            logger.error("Pydantic validation failed for Gemma output: %s", type(e).__name__)
             raise GemmaProviderError(
-                f"Gemma generated invalid quest structure: {str(e)}", status_code=502
+                "Gemma generated invalid quest structure", status_code=502
             )
 
         # Verify selected place_id exists in our real candidate list (Anti-Hallucination Guard)
+        # NEVER silently substitute another destination if the LLM hallucinated an unknown place ID!
         place_map = {c.place_id: c for c in candidates}
         selected_candidate = place_map.get(structured.selected_place_id)
 
         if not selected_candidate:
-            # Fallback to nearest candidate if LLM gave invalid ID
-            logger.warning(
-                "Gemma selected non-existent place_id '%s'; falling back to nearest candidate '%s'",
+            logger.error(
+                "Gemma selected place_id '%s' which was not in candidate list of %d places",
                 structured.selected_place_id,
-                candidates[0].place_id,
+                len(candidates),
             )
-            selected_candidate = candidates[0]
+            raise GemmaProviderError(
+                f"Gemma selected an unknown place_id '{structured.selected_place_id}' not found in discovered candidates",
+                status_code=502,
+            )
 
         # Guard: Check that early clues (Clue 1 and Clue 2) do not reveal the destination name
         dest_name_words = [

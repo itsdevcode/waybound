@@ -229,7 +229,8 @@ async def test_end_to_end_quest_generation_google_places_gemma(client: AsyncClie
     assert len(start_data["current_clues"]) == 1
     assert "Journey toward the waters" in start_data["current_clues"][0]["clue"]
 
-    # Verify quest completion with coordinates and observation answer
+    # Verify quest completion with coordinates and observation answer:
+    # Safe verification mode ensures unverified real-world AI quests do NOT award XP by default
     verify_res = await client.post(
         f"/api/v1/quests/{quest_id}/verify",
         json={
@@ -241,6 +242,202 @@ async def test_end_to_end_quest_generation_google_places_gemma(client: AsyncClie
     assert verify_res.status_code == 200
     v_data = verify_res.json()
     assert v_data["success"] is True
-    assert v_data["reward_xp_awarded"] == 300
-    assert v_data["quest"]["status"] == "completed"
+    # By default, real-world unverified AI quests award 0 XP for safety
+    assert v_data["reward_xp_awarded"] == 0
+    assert "withheld pending" in v_data["message"]
     assert v_data["quest"]["destination_name"] == "Palace of Fine Arts"
+
+
+@pytest.mark.asyncio
+async def test_gemma_provider_rejects_unknown_place_id(test_user: User):
+    """Test requirement 2: Reject Gemma outputs that select an unknown Google Place ID. Never silently substitute."""
+    # Mock Google Places returning candidate "ChIJ_real_candidate"
+    async def places_handler(request):
+        return Response(200, json={
+            "places": [{
+                "id": "ChIJ_real_candidate",
+                "displayName": {"text": "Golden Gate Park", "languageCode": "en"},
+                "location": {"latitude": 37.7694, "longitude": -122.4862},
+                "primaryType": "park",
+                "businessStatus": "OPERATIONAL",
+            }]
+        })
+
+    # Mock Gemma hallucinating an unknown place ID "ChIJ_hallucinated_place_id"
+    hallucinated_output = dict(MOCK_GEMMA_LLM_OUTPUT)
+    hallucinated_output["selected_place_id"] = "ChIJ_hallucinated_place_id"
+
+    async def gemma_handler(request):
+        return Response(200, json={
+            "candidates": [{
+                "content": {"parts": [{"text": json.dumps(hallucinated_output)}]}
+            }]
+        })
+
+    places_client = AsyncClient(transport=httpx_mock_transport(places_handler))
+    gemma_client = AsyncClient(transport=httpx_mock_transport(gemma_handler))
+
+    places_service = GooglePlacesService(api_key="test_key", client=places_client)
+    provider = GemmaQuestProvider(
+        places_service=places_service,
+        api_key="test_gemma_key",
+        http_client=gemma_client,
+    )
+
+    from app.schemas.quest import QuestCreateRequest
+    from app.services.providers.gemma import GemmaProviderError
+
+    req = QuestCreateRequest(
+        user_id=test_user.id,
+        available_minutes=30,
+        explorer_type="nature",
+        difficulty="medium",
+        latitude=37.7694,
+        longitude=-122.4862,
+    )
+
+    with pytest.raises(GemmaProviderError) as exc_info:
+        await provider.generate_quest(req)
+
+    assert exc_info.value.status_code == 502
+    assert "unknown place_id" in exc_info.value.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_google_places_service_radius_validation():
+    """Test requirement 3: Harden allowed search radius (e.g. min 100m, max 50,000m, non-finite)."""
+    service = GooglePlacesService(api_key="test_key")
+
+    with pytest.raises(ValueError, match="Search radius must be between"):
+        await service.search_nearby_places(latitude=37.7749, longitude=-122.4194, radius_meters=50.0)
+
+    with pytest.raises(ValueError, match="Search radius must be between"):
+        await service.search_nearby_places(latitude=37.7749, longitude=-122.4194, radius_meters=60000.0)
+
+    with pytest.raises(ValueError, match="Search radius must be a finite number"):
+        await service.search_nearby_places(latitude=37.7749, longitude=-122.4194, radius_meters=float("inf"))
+
+
+@pytest.mark.asyncio
+async def test_google_places_service_handles_malformed_and_unsuitable_places():
+    """Test requirement 3: Handle malformed responses, non-dict items, unsuitable categories, and closed places."""
+    malformed_json = {
+        "places": [
+            # 1. Closed place
+            {
+                "id": "closed_1",
+                "displayName": {"text": "Closed Museum"},
+                "location": {"latitude": 37.7750, "longitude": -122.4190},
+                "primaryType": "museum",
+                "businessStatus": "CLOSED_PERMANENTLY",
+            },
+            # 2. Unsuitable category (gas_station, parking, cemetery)
+            {
+                "id": "unsuitable_1",
+                "displayName": {"text": "Downtown Parking Garage"},
+                "location": {"latitude": 37.7751, "longitude": -122.4191},
+                "primaryType": "parking",
+                "businessStatus": "OPERATIONAL",
+            },
+            # 3. Missing coordinates
+            {
+                "id": "missing_coords",
+                "displayName": {"text": "Ghost Place"},
+                "businessStatus": "OPERATIONAL",
+            },
+            # 4. Out-of-bounds latitude/longitude
+            {
+                "id": "invalid_coords",
+                "displayName": {"text": "Space Station"},
+                "location": {"latitude": 95.0, "longitude": -122.4191},
+                "businessStatus": "OPERATIONAL",
+            },
+            # 5. Non-dict element
+            "invalid_string_item",
+            # 6. Valid public park candidate within range
+            {
+                "id": "valid_park_1",
+                "displayName": {"text": "Civic Center Plaza"},
+                "location": {"latitude": 37.7793, "longitude": -122.4175},
+                "primaryType": "park",
+                "businessStatus": "OPERATIONAL",
+            },
+        ]
+    }
+
+    async def handler(request):
+        return Response(200, json=malformed_json)
+
+    client = AsyncClient(transport=httpx_mock_transport(handler))
+    service = GooglePlacesService(api_key="test_key", client=client)
+
+    candidates = await service.search_nearby_places(
+        latitude=37.7749,
+        longitude=-122.4194,
+        radius_meters=3000.0,
+    )
+
+    # Only the valid park should survive filtering
+    assert len(candidates) == 1
+    assert candidates[0].place_id == "valid_park_1"
+    assert candidates[0].name == "Civic Center Plaza"
+
+
+@pytest.mark.asyncio
+async def test_allow_unverified_real_world_xp_toggle(client: AsyncClient, test_user: User, monkeypatch):
+    """Test requirement 1: Safe verification mode with allow_unverified_real_world_xp toggle enabled."""
+    monkeypatch.setattr(settings, "quest_provider", "google_places_gemma")
+    monkeypatch.setattr(settings, "google_maps_api_key", "test_maps_key")
+    monkeypatch.setattr(settings, "gemma_api_key", "test_gemma_key")
+    monkeypatch.setattr(settings, "allow_unverified_real_world_xp", True)
+
+    import httpx
+    original_post = httpx.AsyncClient.post
+
+    async def mock_post(self, url, *args, **kwargs):
+        if "places.googleapis.com" in str(url):
+            return Response(200, json=MOCK_PLACES_JSON)
+        if "generativelanguage.googleapis.com" in str(url) or "models/gemma" in str(url):
+            return Response(
+                200,
+                json={
+                    "candidates": [{
+                        "content": {"parts": [{"text": json.dumps(MOCK_GEMMA_LLM_OUTPUT)}]}
+                    }]
+                },
+            )
+        return await original_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    gen_res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(test_user.id),
+            "available_minutes": 30,
+            "explorer_type": "mystery",
+            "difficulty": "medium",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+    )
+    assert gen_res.status_code == 201
+    quest_id = gen_res.json()["id"]
+
+    await client.post(f"/api/v1/quests/{quest_id}/start")
+
+    verify_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": 37.8020,
+            "longitude": -122.4488,
+            "observation_answer": "weeping women",
+        },
+    )
+    assert verify_res.status_code == 200
+    v_data = verify_res.json()
+    assert v_data["success"] is True
+    # When allow_unverified_real_world_xp is explicitly True, XP is awarded
+    assert v_data["reward_xp_awarded"] == 300
+    assert v_data["total_xp"] == 300
+    assert "Real-world destination unlocked" in v_data["message"]

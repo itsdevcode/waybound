@@ -13,9 +13,17 @@ class Settings(BaseSettings):
     # Provider mode: "demo" or "google_places_gemma"
     quest_provider: str = "demo"
 
+    # Real-world verification safety:
+    # Gemma-generated observation questions are unverified AI hypotheses.
+    # To prevent awarding real-world XP based on unverified ground truth,
+    # real-world AI quests do not award progression XP unless ground-truth verification is verified or enabled.
+    allow_unverified_real_world_xp: bool = False
+
     # Google Places API (New) Configuration
     google_maps_api_key: str = ""
-    google_places_search_radius_meters: float = 2000.0
+    google_places_search_radius_meters: float = 5000.0
+    google_places_min_radius_meters: float = 100.0
+    google_places_max_radius_meters: float = 50000.0
     google_places_timeout_seconds: float = 10.0
 
     # Gemma AI Configuration

@@ -84,7 +84,13 @@ class GooglePlacesService:
                 status_code=500,
             )
 
-        radius = radius_meters or settings.google_places_search_radius_meters
+        radius = radius_meters if radius_meters is not None else settings.google_places_search_radius_meters
+        if not math.isfinite(radius):
+            raise ValueError("Search radius must be a finite number")
+        if not (settings.google_places_min_radius_meters <= radius <= settings.google_places_max_radius_meters):
+            msg = f"Search radius must be between {settings.google_places_min_radius_meters}m and {settings.google_places_max_radius_meters}m, got {radius}m"
+            raise ValueError(msg)
+
         types = included_types or EXPLORATION_PLACE_TYPES
 
         url = "https://places.googleapis.com/v1/places:searchNearby"
@@ -120,28 +126,66 @@ class GooglePlacesService:
                     )
 
             if response.status_code != 200:
+                # Log status code without leaking full response bodies or API keys
                 logger.error(
-                    "Google Places searchNearby failed with HTTP %d: %s",
+                    "Google Places searchNearby returned error HTTP %d",
                     response.status_code,
-                    response.text,
                 )
+                if response.status_code in (401, 403):
+                    raise GooglePlacesError(
+                        "Google Places API authentication or permissions failed",
+                        status_code=502,
+                    )
                 raise GooglePlacesError(
                     f"Google Places API request failed with status {response.status_code}",
                     status_code=502,
                 )
 
-            data = response.json()
-            raw_places = data.get("places", [])
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.error("Google Places API returned non-JSON payload: %s", json_err)
+                raise GooglePlacesError("Malformed JSON response from Google Places API", status_code=502)
+
+            if not isinstance(data, dict):
+                logger.error("Google Places response root is not a JSON object: %s", type(data))
+                raise GooglePlacesError("Malformed response structure from Google Places API", status_code=502)
+
+            raw_places = data.get("places")
+            if raw_places is None:
+                # Google Places returns empty JSON {} when no places are found
+                raw_places = []
+            elif not isinstance(raw_places, list):
+                logger.error("'places' field in Google Places response is not a list: %s", type(raw_places))
+                raise GooglePlacesError("Malformed places array in Google Places API response", status_code=502)
 
             candidates: list[PlaceCandidate] = []
             for item in raw_places:
-                loc = item.get("location")
-                if not loc:
+                if not isinstance(item, dict):
                     continue
 
-                place_lat = loc.get("latitude")
-                place_lon = loc.get("longitude")
-                if place_lat is None or place_lon is None:
+                place_id = item.get("id")
+                if not place_id or not isinstance(place_id, str) or not place_id.strip():
+                    continue
+
+                loc = item.get("location")
+                if not isinstance(loc, dict):
+                    continue
+
+                raw_lat = loc.get("latitude")
+                raw_lon = loc.get("longitude")
+                if raw_lat is None or raw_lon is None:
+                    continue
+
+                try:
+                    place_lat = float(raw_lat)
+                    place_lon = float(raw_lon)
+                except (ValueError, TypeError):
+                    continue
+
+                if not math.isfinite(place_lat) or not math.isfinite(place_lon):
+                    continue
+                if not (-90.0 <= place_lat <= 90.0) or not (-180.0 <= place_lon <= 180.0):
                     continue
 
                 # Filter out closed places if businessStatus is specified
@@ -149,28 +193,49 @@ class GooglePlacesService:
                 if business_status in ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY"):
                     continue
 
-                display_name_obj = item.get("displayName", {})
-                name = display_name_obj.get("text", "Unknown Place")
-                primary_type = item.get("primaryType", "point_of_interest")
-                formatted_address = item.get("formattedAddress")
-                place_id = item.get("id")
+                display_name_obj = item.get("displayName")
+                name = None
+                if isinstance(display_name_obj, dict):
+                    raw_text = display_name_obj.get("text")
+                    if isinstance(raw_text, str) and raw_text.strip():
+                        name = raw_text.strip()
 
-                if not place_id or not name:
+                if not name:
                     continue
+
+                primary_type = item.get("primaryType")
+                if not isinstance(primary_type, str) or not primary_type.strip():
+                    primary_type = "point_of_interest"
+
+                # Filter out explicitly unsuitable or private types if present
+                unsuitable_types = {
+                    "private", "parking", "gas_station", "storage",
+                    "cemetery", "funeral_home", "prison",
+                }
+                if primary_type in unsuitable_types:
+                    continue
+
+                formatted_address = item.get("formattedAddress")
+                if not isinstance(formatted_address, str):
+                    formatted_address = None
 
                 # Calculate Haversine distance from search origin
                 distance = calculate_haversine_distance_meters(
-                    latitude, longitude, float(place_lat), float(place_lon)
+                    latitude, longitude, place_lat, place_lon
                 )
 
+                # Reject candidate if beyond search radius + 15% tolerance
+                if distance > (radius * 1.15):
+                    continue
+
                 candidate = PlaceCandidate(
-                    place_id=place_id,
+                    place_id=place_id.strip(),
                     name=name,
-                    latitude=float(place_lat),
-                    longitude=float(place_lon),
+                    latitude=place_lat,
+                    longitude=place_lon,
                     primary_type=primary_type,
                     address=formatted_address,
-                    business_status=business_status,
+                    business_status=business_status if isinstance(business_status, str) else None,
                     distance_meters=round(distance, 1),
                 )
                 candidates.append(candidate)
@@ -179,9 +244,15 @@ class GooglePlacesService:
             candidates.sort(key=lambda c: c.distance_meters if c.distance_meters is not None else float("inf"))
             return candidates
 
-        except httpx.RequestError as e:
-            logger.error("Network error while connecting to Google Places API: %s", e)
+        except (httpx.TimeoutException, httpx.ConnectTimeout) as e:
+            logger.error("Connection timeout while contacting Google Places API: %s", type(e).__name__)
             raise GooglePlacesError(
-                f"Failed to connect to Google Places API: {str(e)}",
+                "Connection timeout while contacting Google Places API",
+                status_code=504,
+            )
+        except httpx.RequestError as e:
+            logger.error("Network error while connecting to Google Places API: %s", type(e).__name__)
+            raise GooglePlacesError(
+                "Network error while connecting to Google Places API",
                 status_code=504,
             )
