@@ -30,7 +30,14 @@ def get_quest_service(
 ) -> QuestService:
     quest_repo = QuestRepository(session)
     user_repo = UserRepository(session)
-    provider = create_quest_provider()
+    try:
+        provider = create_quest_provider()
+    except Exception as e:
+        logger.error("Configuration or provider error in user service: %s", type(e).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error. Please contact administrator.",
+        )
     return QuestService(
         session=session,
         quest_repository=quest_repo,

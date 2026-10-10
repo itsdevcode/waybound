@@ -299,11 +299,10 @@ class QuestService:
                 raise UserNotFoundError("Explorer profile not found for quest owner")
 
             # Real-world verification safety:
-            # Award progression XP for:
-            # 1. Explicit simulation mode (testing & local development), or
-            # 2. When allow_unverified_real_world_xp is explicitly configured true.
-            # Otherwise, complete the quest safely without inflating real-world explorer XP on unverified AI ground-truth.
-            if is_simulation or settings.allow_unverified_real_world_xp:
+            # Simulated demo quests are eligible for XP under verified simulation rules.
+            # Real-world Google Places + Gemma quests award 0 XP while AI-generated observation answers
+            # remain unverified, ensuring no progression XP is awarded based on unverified ground truth.
+            if is_simulation:
                 awarded_xp = quest.reward_xp
             else:
                 awarded_xp = 0
@@ -331,8 +330,6 @@ class QuestService:
                 "[Simulated Demo] Quest verified successfully in simulation mode. Destination details unlocked. "
                 "(Notice: Simulated test scenario, not field-verified outdoor exploration)."
             )
-        elif awarded_xp > 0:
-            completion_message = "Quest verified successfully! Real-world destination unlocked."
         else:
             completion_message = (
                 "Quest completed and destination unlocked! Notice: Real-world progression XP is withheld pending "

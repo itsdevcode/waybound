@@ -384,12 +384,14 @@ async def test_google_places_service_handles_malformed_and_unsuitable_places():
 
 
 @pytest.mark.asyncio
-async def test_allow_unverified_real_world_xp_toggle(client: AsyncClient, test_user: User, monkeypatch):
-    """Test requirement 1: Safe verification mode with allow_unverified_real_world_xp toggle enabled."""
+async def test_real_world_gemma_quest_awards_zero_xp(client: AsyncClient, test_user: User, monkeypatch):
+    """Test Fix 1 & 3: Real-world Gemma quests cannot award XP from unverified observation answers; awards exactly 0 XP."""
     monkeypatch.setattr(settings, "quest_provider", "google_places_gemma")
     monkeypatch.setattr(settings, "google_maps_api_key", "test_maps_key")
     monkeypatch.setattr(settings, "gemma_api_key", "test_gemma_key")
-    monkeypatch.setattr(settings, "allow_unverified_real_world_xp", True)
+
+    # Verify that allow_unverified_real_world_xp configuration attribute does not exist on settings
+    assert not hasattr(settings, "allow_unverified_real_world_xp")
 
     import httpx
     original_post = httpx.AsyncClient.post
@@ -426,6 +428,7 @@ async def test_allow_unverified_real_world_xp_toggle(client: AsyncClient, test_u
 
     await client.post(f"/api/v1/quests/{quest_id}/start")
 
+    # Verify quest completion
     verify_res = await client.post(
         f"/api/v1/quests/{quest_id}/verify",
         json={
@@ -437,7 +440,52 @@ async def test_allow_unverified_real_world_xp_toggle(client: AsyncClient, test_u
     assert verify_res.status_code == 200
     v_data = verify_res.json()
     assert v_data["success"] is True
-    # When allow_unverified_real_world_xp is explicitly True, XP is awarded
-    assert v_data["reward_xp_awarded"] == 300
-    assert v_data["total_xp"] == 300
-    assert "Real-world destination unlocked" in v_data["message"]
+    # Real-world unverified AI quests MUST award 0 XP
+    assert v_data["reward_xp_awarded"] == 0
+    assert v_data["total_xp"] == 0
+    assert v_data["level"] == 1
+    assert "withheld pending" in v_data["message"]
+    assert v_data["quest"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_safe_http_error_handling_invalid_input(client: AsyncClient, test_user: User):
+    """Test Fix 2 & 3: Safe HTTP error responses for invalid input without internal detail leakage."""
+    # Invalid coordinates (out-of-range latitude in quest generation with google_places_gemma)
+    res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(test_user.id),
+            "available_minutes": 30,
+            "explorer_type": "mystery",
+            "difficulty": "medium",
+            "latitude": 999.0,  # invalid latitude > 90
+            "longitude": -122.4194,
+        },
+    )
+    # Pydantic schema validation catches this cleanly with 422
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_safe_http_error_handling_configuration_error(client: AsyncClient, test_user: User, monkeypatch):
+    """Test Fix 2 & 3: Configuration error returns safe HTTP 500 without leaking secrets or internals."""
+    monkeypatch.setattr(settings, "quest_provider", "google_places_gemma")
+    monkeypatch.setattr(settings, "google_maps_api_key", "")  # Missing key triggers ValueError in factory
+
+    res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(test_user.id),
+            "available_minutes": 30,
+            "explorer_type": "mystery",
+            "difficulty": "medium",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+    )
+    # Returns 500 without leaking GOOGLE_MAPS_API_KEY internal stack trace
+    assert res.status_code == 500
+    assert "Server configuration error" in res.json()["detail"]
+    assert "GOOGLE_MAPS_API_KEY" not in res.json()["detail"]
+
