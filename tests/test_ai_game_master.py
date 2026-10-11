@@ -813,3 +813,202 @@ async def test_waypoint_secrecy_and_progressive_unlocking(client: AsyncClient, d
     assert hint3_res.quest.destination_name is None  # Still secret!
 
 
+@pytest.mark.asyncio
+async def test_gemma_no_fallback_when_no_intermediate_waypoints_returned(test_user: User):
+    """
+    Regression test: Verifies that when Gemma returns no intermediate waypoints,
+    the system does NOT fall back to auto-assigning the nearest Google Places candidates.
+    The quest should have no waypoint coordinates, representing a general exploration area.
+    """
+    places_response = {
+        "places": [
+            {
+                "id": "ChIJ_destination_landmark",
+                "displayName": {"text": "Mission Dolores Park", "languageCode": "en"},
+                "location": {"latitude": 37.7596, "longitude": -122.4269},
+                "primaryType": "park",
+                "formattedAddress": "Dolores St, San Francisco, CA 94114",
+                "businessStatus": "OPERATIONAL",
+            },
+            {
+                "id": "ChIJ_other_candidate_1",
+                "displayName": {"text": "Bi-Rite Creamery", "languageCode": "en"},
+                "location": {"latitude": 37.7610, "longitude": -122.4250},
+                "primaryType": "ice_cream_shop",
+                "formattedAddress": "3692 18th St, San Francisco, CA 94110",
+                "businessStatus": "OPERATIONAL",
+            },
+            {
+                "id": "ChIJ_other_candidate_2",
+                "displayName": {"text": "Mission High School Clocktower", "languageCode": "en"},
+                "location": {"latitude": 37.7620, "longitude": -122.4270},
+                "primaryType": "historical_landmark",
+                "formattedAddress": "3750 18th St, San Francisco, CA 94114",
+                "businessStatus": "OPERATIONAL",
+            },
+        ]
+    }
+
+    # Gemma explicitly passes empty intermediate_waypoint_place_ids
+    gemma_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps({
+                                "selected_place_id": "ChIJ_destination_landmark",
+                                "intermediate_waypoint_place_ids": [],
+                                "title": "The Golden Palm Vista",
+                                "story": "Traverse the rolling greenery under sunny skies.",
+                                "clues": [
+                                    "Head toward the sun-drenched hills of the district.",
+                                    "Look for towering palm trees lining the pathway.",
+                                    "Reach the crest overlooking the city skyline.",
+                                ],
+                                "verification_prompt": "What color is the statue near the bridge?",
+                                "verification_answer": "bronze",
+                                "difficulty": "easy",
+                                "reward_xp": 200,
+                            })
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    async def places_handler(request):
+        return Response(200, json=places_response)
+
+    async def gemma_handler(request):
+        return Response(200, json=gemma_response)
+
+    places_client = AsyncClient(transport=httpx_mock_transport(places_handler))
+    gemma_client = AsyncClient(transport=httpx_mock_transport(gemma_handler))
+
+    places_svc = GooglePlacesService(api_key="test_places_key", client=places_client)
+    provider = GemmaQuestProvider(
+        places_service=places_svc,
+        api_key="test_gemma_key",
+        http_client=gemma_client,
+    )
+
+    from app.schemas.quest import QuestCreateRequest
+    req = QuestCreateRequest(
+        user_id=test_user.id,
+        available_minutes=30,
+        explorer_type="discovery",
+        difficulty="easy",
+        latitude=37.7600,
+        longitude=-122.4200,
+    )
+
+    result = await provider.generate_quest(req)
+
+    # Destination is selected
+    assert result.destination_name == "Mission Dolores Park"
+    # CRITICAL: No automatic fallback to Bi-Rite Creamery or Clocktower!
+    assert len(result.waypoints) == 0
+
+
+@pytest.mark.asyncio
+async def test_gemma_rejects_semantically_mismatched_and_inaccessible_waypoints(test_user: User):
+    """
+    Regression test: Verifies that intermediate waypoints are strictly rejected when:
+    1. The candidate does NOT semantically match the clue.
+    2. The candidate is NOT publicly accessible (CLOSED_PERMANENTLY).
+    """
+    places_response = {
+        "places": [
+            {
+                "id": "ChIJ_dest",
+                "displayName": {"text": "Coit Tower Summit", "languageCode": "en"},
+                "location": {"latitude": 37.8024, "longitude": -122.4058},
+                "primaryType": "tower",
+                "formattedAddress": "1 Telegraph Hill Blvd, San Francisco, CA 94133",
+                "businessStatus": "OPERATIONAL",
+            },
+            {
+                "id": "ChIJ_mismatch",
+                "displayName": {"text": "Bob's Tire Repair", "languageCode": "en"},
+                "location": {"latitude": 37.7950, "longitude": -122.4050},
+                "primaryType": "car_repair",
+                "formattedAddress": "123 Auto Row, San Francisco, CA 94133",
+                "businessStatus": "OPERATIONAL",
+            },
+            {
+                "id": "ChIJ_closed",
+                "displayName": {"text": "Pioneer Park Vista Stairs", "languageCode": "en"},
+                "location": {"latitude": 37.8010, "longitude": -122.4055},
+                "primaryType": "park",
+                "formattedAddress": "Pioneer Park, San Francisco, CA 94133",
+                "businessStatus": "CLOSED_PERMANENTLY",
+            },
+        ]
+    }
+
+    gemma_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps({
+                                "selected_place_id": "ChIJ_dest",
+                                "intermediate_waypoint_place_ids": [
+                                    "ChIJ_mismatch",  # Clue 1: semantic mismatch and car_repair
+                                    "ChIJ_closed",    # Clue 2: permanently closed
+                                ],
+                                "title": "The Telegraph Beacon",
+                                "story": "Ascend the steep summit overlooking the bay.",
+                                "clues": [
+                                    "Climb past the quiet gardens on the eastern slope.",
+                                    "Follow the stone steps towards the observation landing.",
+                                    "Stand beneath the fluted concrete tower.",
+                                ],
+                                "verification_prompt": "What bird is depicted on the mural?",
+                                "verification_answer": "pelican",
+                                "difficulty": "medium",
+                                "reward_xp": 300,
+                            })
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    async def places_handler(request):
+        return Response(200, json=places_response)
+
+    async def gemma_handler(request):
+        return Response(200, json=gemma_response)
+
+    places_client = AsyncClient(transport=httpx_mock_transport(places_handler))
+    gemma_client = AsyncClient(transport=httpx_mock_transport(gemma_handler))
+
+    places_svc = GooglePlacesService(api_key="test_places_key", client=places_client)
+    provider = GemmaQuestProvider(
+        places_service=places_svc,
+        api_key="test_gemma_key",
+        http_client=gemma_client,
+    )
+
+    from app.schemas.quest import QuestCreateRequest
+    req = QuestCreateRequest(
+        user_id=test_user.id,
+        available_minutes=30,
+        explorer_type="mystery",
+        difficulty="medium",
+        latitude=37.7900,
+        longitude=-122.4050,
+    )
+
+    result = await provider.generate_quest(req)
+
+    # Both waypoints should be rejected: Bob's Tire Repair (mismatch + car_repair)
+    # and Pioneer Park Vista Stairs (CLOSED_PERMANENTLY)
+    assert len(result.waypoints) == 0
+
+

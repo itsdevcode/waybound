@@ -7,6 +7,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from app.core.config import settings
+from app.core.geo import calculate_haversine_distance_meters
 from app.schemas.place import PlaceCandidate
 from app.schemas.quest import QuestCreateRequest
 from app.services.places import GooglePlacesService
@@ -17,6 +18,103 @@ from app.services.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+LANDMARK_SYNONYMS: dict[str, set[str]] = {
+    "steps": {"stairs", "steps", "stairway", "staircase", "terrace", "climb", "flights"},
+    "stairs": {"stairs", "steps", "stairway", "staircase", "climb", "flights"},
+    "bridge": {"bridge", "crossing", "overpass", "span", "arch", "trestle", "viaduct"},
+    "arch": {"arch", "arched", "gateway", "portal", "span", "arc"},
+    "rotunda": {"rotunda", "dome", "cupola", "pavilion", "columns", "colonnade"},
+    "dome": {"rotunda", "dome", "cupola", "vault"},
+    "tower": {"tower", "spire", "column", "belfry", "minaret", "needle", "pinnacle"},
+    "monument": {"monument", "memorial", "pillar", "obelisk", "cenotaph", "shrine"},
+    "statue": {"statue", "sculpture", "figure", "bronze", "marble", "monument", "bust"},
+    "fountain": {"fountain", "basin", "water", "cascade", "pool", "spout", "geyser"},
+    "garden": {"garden", "botanical", "flora", "greenery", "grove", "arboretum", "plants"},
+    "park": {"park", "meadow", "lawn", "grounds", "plaza", "square", "preserve"},
+    "plaza": {"plaza", "square", "courtyard", "piazza", "esplanade"},
+    "pier": {"pier", "dock", "wharf", "marina", "waterfront", "quay", "jetty"},
+    "lagoon": {"lagoon", "lake", "pond", "water", "pool", "basin", "reservoir"},
+    "lake": {"lake", "lagoon", "pond", "water", "reservoir"},
+    "pond": {"pond", "lake", "lagoon", "water", "pool"},
+    "library": {"library", "books", "manuscripts", "archives", "reading"},
+    "museum": {"museum", "gallery", "exhibit", "collection", "artifacts"},
+    "hall": {"hall", "auditorium", "theater", "theatre", "pavilion"},
+    "church": {"church", "chapel", "cathedral", "sanctuary", "temple", "shrine", "basilica"},
+    "basilica": {"basilica", "church", "cathedral", "sanctuary"},
+    "temple": {"temple", "shrine", "sanctuary", "pagoda"},
+    "fort": {"fort", "fortress", "citadel", "bastion", "battery", "rampart"},
+    "overlook": {"overlook", "vista", "viewpoint", "view", "lookout", "panorama"},
+    "viewpoint": {"overlook", "vista", "viewpoint", "view", "lookout"},
+    "trail": {"path", "trail", "walkway", "promenade", "lane", "route"},
+    "path": {"path", "trail", "walkway", "promenade", "lane"},
+}
+
+INACCESSIBLE_TYPES: set[str] = {
+    "private_residence",
+    "corporate_office",
+    "car_repair",
+    "parking",
+    "gas_station",
+    "storage",
+    "car_dealer",
+}
+
+STOP_WORDS: set[str] = {
+    "the", "and", "of", "in", "at", "for", "to", "a", "an", "on", "by", "with",
+    "st", "ave", "rd", "dr", "blvd", "street", "avenue", "boulevard",
+    "drive", "road", "place", "suite", "floor", "way", "lane", "san",
+    "francisco", "california", "city", "state", "center", "centre", "building",
+}
+
+
+def is_publicly_accessible(candidate: PlaceCandidate) -> bool:
+    """Verifies that a candidate location is publicly accessible and operational."""
+    if candidate.business_status and candidate.business_status in (
+        "CLOSED_PERMANENTLY",
+        "CLOSED_TEMPORARILY",
+    ):
+        return False
+    if candidate.primary_type and candidate.primary_type in INACCESSIBLE_TYPES:
+        return False
+    return True
+
+
+def semantically_matches_clue(clue: str, candidate: PlaceCandidate) -> bool:
+    """
+    Validates that a waypoint candidate semantically matches the corresponding clue text.
+    Checks direct significant tokens and landmark synonyms against the clue narrative.
+    """
+    clue_lower = clue.lower()
+
+    # 1. Significant tokens from candidate name
+    name_tokens = [
+        t.lower()
+        for t in re.findall(r"\b[A-Za-z0-9]{3,}\b", candidate.name)
+        if t.lower() not in STOP_WORDS
+    ]
+
+    for token in name_tokens:
+        if token in clue_lower:
+            return True
+        synonyms = LANDMARK_SYNONYMS.get(token, set())
+        if any(syn in clue_lower for syn in synonyms):
+            return True
+
+    # 2. Significant tokens from candidate primary_type
+    type_tokens = [
+        t.lower()
+        for t in re.findall(r"\b[A-Za-z0-9]{3,}\b", candidate.primary_type)
+        if t.lower() not in STOP_WORDS
+    ]
+    for token in type_tokens:
+        if token in clue_lower:
+            return True
+        synonyms = LANDMARK_SYNONYMS.get(token, set())
+        if any(syn in clue_lower for syn in synonyms):
+            return True
+
+    return False
 
 
 class GemmaQuestStructuredOutput(BaseModel):
@@ -98,7 +196,12 @@ Here are real nearby candidate locations discovered via Google Places:
 
 TASK INSTRUCTIONS:
 1. Select EXACTLY ONE location from the candidate list by its `place_id` as the final secret destination (`selected_place_id`). You MUST NOT invent any place or place_id.
-2. If other distinct candidates exist between the explorer and the destination, you may optionally select up to 2 distinct intermediate waypoint place_ids from the candidate list (`intermediate_waypoint_place_ids`) to associate with Clue 1 or Clue 2. Do not select the final destination as an intermediate waypoint. If no suitable intermediate waypoint exists, pass an empty list `[]`.
+2. Intermediate Waypoints (Optional):
+   - You may optionally select up to 2 distinct intermediate waypoint place_ids from the candidate list (`intermediate_waypoint_place_ids`) to associate with Clue 1 and/or Clue 2.
+   - Do NOT select the final destination as an intermediate waypoint.
+   - Each selected intermediate waypoint MUST be publicly accessible and reasonably ordered along the exploration journey from the explorer towards the destination.
+   - CRITICAL REQUIREMENT: If you select an intermediate waypoint for Clue 1 or Clue 2, that clue's text MUST semantically describe distinctive physical, architectural, or environmental features of that specific waypoint location (without revealing its exact full proper name).
+   - If no candidate has features matching your narrative or candidates are unsuitable, do NOT select any intermediate waypoints; pass an empty list `[]`.
 3. Generate an RPG-style quest title (maximum 150 characters).
 4. Create an immersive story (backstory and atmosphere matching the explorer archetype).
 5. Provide EXACTLY THREE progressive clues:
@@ -343,43 +446,86 @@ Return ONLY a valid JSON object with this exact structure:
                         re.escape(word), "the hidden site", structured.clues[idx], flags=re.IGNORECASE
                     )
 
-        # Validate and associate intermediate waypoints with clues (Feature 4 & 5)
-        # Select genuine candidates that are distinct from the final destination
+        # Validate and associate intermediate waypoints with clues
+        # Strictly enforce:
+        # 1. Validated against Google Places candidates (excluding the secret destination).
+        # 2. Distinct from each other and the destination.
+        # 3. Publicly accessible and operational.
+        # 4. Semantically matches the corresponding clue.
+        # 5. Reasonably ordered along the exploration journey (no severe backtracking).
+        # 6. NEVER fallback to auto-assigning arbitrary nearest places if AI returns none or unsuitable candidates.
         other_candidates = [
             c for c in candidates if c.place_id != selected_candidate.place_id
         ]
         other_by_id = {c.place_id: c for c in other_candidates}
 
-        step_waypoints: list[StepWaypointCandidate | None] = []
-        for wp_id in structured.intermediate_waypoint_place_ids:
-            if wp_id and wp_id in other_by_id:
-                cand = other_by_id[wp_id]
-                step_waypoints.append(
-                    StepWaypointCandidate(
-                        place_id=cand.place_id,
-                        name=cand.name,
-                        latitude=cand.latitude,
-                        longitude=cand.longitude,
-                    )
-                )
+        step_waypoints: list[StepWaypointCandidate | None] = [None, None, None]
+        seen_place_ids: set[str] = set()
 
-        # If LLM didn't choose waypoints but other suitable candidates exist,
-        # assign up to 2 closest candidates as intermediate waypoints for clues 1 and 2
-        if not step_waypoints and other_candidates:
-            # Sort candidates by distance to explorer
-            sorted_others = sorted(
-                other_candidates,
-                key=lambda c: c.distance_meters if c.distance_meters is not None else 0.0,
-            )
-            for c in sorted_others[:2]:
-                step_waypoints.append(
-                    StepWaypointCandidate(
-                        place_id=c.place_id,
-                        name=c.name,
-                        latitude=c.latitude,
-                        longitude=c.longitude,
-                    )
+        start_lat = request.latitude
+        start_lon = request.longitude
+
+        raw_waypoint_ids = structured.intermediate_waypoint_place_ids or []
+        for idx in range(min(2, len(raw_waypoint_ids))):
+            wp_id = raw_waypoint_ids[idx]
+            if not wp_id or wp_id not in other_by_id:
+                continue
+
+            cand = other_by_id[wp_id]
+
+            # 1. Distinctness
+            if cand.place_id in seen_place_ids:
+                logger.info("Intermediate waypoint '%s' already used; skipping duplicate.", cand.name)
+                continue
+
+            # 2. Public Accessibility
+            if not is_publicly_accessible(cand):
+                logger.info("Intermediate waypoint '%s' is not publicly accessible; omitting.", cand.name)
+                continue
+
+            # 3. Semantic match with corresponding clue
+            clue_text = structured.clues[idx] if idx < len(structured.clues) else ""
+            if not semantically_matches_clue(clue_text, cand):
+                logger.info(
+                    "Intermediate waypoint '%s' does not semantically match Clue %d ('%s'); omitting.",
+                    cand.name,
+                    idx + 1,
+                    clue_text[:60],
                 )
+                continue
+
+            # 4. Reasonably ordered along the exploration journey
+            cand_dist = calculate_haversine_distance_meters(
+                start_lat, start_lon, cand.latitude, cand.longitude
+            )
+            # If this is waypoint 2 (idx == 1) and waypoint 1 was accepted:
+            if idx == 1 and step_waypoints[0] is not None and step_waypoints[0].place_id:
+                wp1_cand = other_by_id.get(step_waypoints[0].place_id)
+                if wp1_cand:
+                    wp1_dist = calculate_haversine_distance_meters(
+                        start_lat, start_lon, wp1_cand.latitude, wp1_cand.longitude
+                    )
+                    # Waypoint 2 should not cause severe backtracking compared to Waypoint 1
+                    if cand_dist < wp1_dist - 200:
+                        logger.info(
+                            "Waypoint 2 ('%s', %.0fm) is out of journey order compared to Waypoint 1 ('%s', %.0fm); omitting.",
+                            cand.name,
+                            cand_dist,
+                            wp1_cand.name,
+                            wp1_dist,
+                        )
+                        continue
+
+            seen_place_ids.add(cand.place_id)
+            step_waypoints[idx] = StepWaypointCandidate(
+                place_id=cand.place_id,
+                name=cand.name,
+                latitude=cand.latitude,
+                longitude=cand.longitude,
+            )
+
+        while step_waypoints and step_waypoints[-1] is None:
+            _ = step_waypoints.pop()
 
         return QuestGenerationResult(
             title=structured.title[:150],
