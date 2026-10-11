@@ -10,34 +10,34 @@
 WAYBOUND transforms ordinary neighborhood walks and nearby public landmarks into immersive, game-like mystery expeditions. Powered by open-weights Gemma AI, Google Places discovery, live GPS geolocation, and walking route navigation, WAYBOUND encourages explorers to get outside, solve environmental clues, discover hidden secrets in their cities, and team up with friends.
 
 <p align="center">
-  <a href="https://waybound-frontend.onrender.com/"><img src="https://img.shields.io/badge/▶_Play_WAYBOUND-Live_App-9333ea?style=for-the-badge&logo=googlemaps&logoColor=white" alt="Play WAYBOUND" /></a>
+  <a href="https://waybound-frontend.onrender.com/"><img src="./docs/assets/badges/cta-play.svg" alt="Play WAYBOUND" /></a>
   &nbsp;
-  <a href="https://github.com/itsdevcode/waybound"><img src="https://img.shields.io/badge/View_Source-GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="View Source" /></a>
+  <a href="https://github.com/itsdevcode/waybound"><img src="./docs/assets/badges/cta-source.svg" alt="View Source" /></a>
   &nbsp;
-  <a href="https://github.com/itsdevcode/waybound/issues/new?template=bug_report.md"><img src="https://img.shields.io/badge/Report_Bug-Issue-ef4444?style=for-the-badge&logo=github&logoColor=white" alt="Report Bug" /></a>
+  <a href="https://github.com/itsdevcode/waybound/issues/new?template=bug_report.md"><img src="./docs/assets/badges/cta-bug.svg" alt="Report Bug" /></a>
   &nbsp;
-  <a href="https://github.com/itsdevcode/waybound/issues/new?template=feature_request.md"><img src="https://img.shields.io/badge/Request_Feature-Ideas-3b82f6?style=for-the-badge&logo=github&logoColor=white" alt="Request Feature" /></a>
+  <a href="https://github.com/itsdevcode/waybound/issues/new?template=feature_request.md"><img src="./docs/assets/badges/cta-feature.svg" alt="Request Feature" /></a>
 </p>
 
 ---
 
-<!-- GitHub Shields.io Dynamic & Tech Badges -->
+<!-- GitHub Badges (Locally Cached for 100% Reliable Rendering) -->
 <p align="center">
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12" /></a>
-  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" /></a>
-  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16_App_Router-black?style=flat-square&logo=next.js&logoColor=white" alt="Next.js" /></a>
-  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
-  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL" /></a>
-  <a href="https://developers.google.com/maps"><img src="https://img.shields.io/badge/Google_Maps_Platform-Places_%26_Routes-4285F4?style=flat-square&logo=googlemaps&logoColor=white" alt="Google Maps Platform" /></a>
-  <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/Google_AI-Gemma_2-8E75C2?style=flat-square&logo=google&logoColor=white" alt="Google Gemma 2" /></a>
-  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-3.4+-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-amber.svg?style=flat-square" alt="MIT License" /></a>
+  <a href="https://www.python.org/"><img src="./docs/assets/badges/python.svg" alt="Python 3.12" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="./docs/assets/badges/fastapi.svg" alt="FastAPI" /></a>
+  <a href="https://nextjs.org/"><img src="./docs/assets/badges/nextjs.svg" alt="Next.js" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="./docs/assets/badges/typescript.svg" alt="TypeScript" /></a>
+  <a href="https://www.postgresql.org/"><img src="./docs/assets/badges/postgresql.svg" alt="PostgreSQL" /></a>
+  <a href="https://developers.google.com/maps"><img src="./docs/assets/badges/googlemaps.svg" alt="Google Maps Platform" /></a>
+  <a href="https://ai.google.dev/"><img src="./docs/assets/badges/gemma.svg" alt="Google Gemma 2" /></a>
+  <a href="https://tailwindcss.com/"><img src="./docs/assets/badges/tailwind.svg" alt="Tailwind CSS" /></a>
+  <a href="./LICENSE"><img src="./docs/assets/badges/license.svg" alt="MIT License" /></a>
 </p>
 <p align="center">
-  <a href="https://github.com/itsdevcode/waybound/stargazers"><img src="https://img.shields.io/github/stars/itsdevcode/waybound?style=flat-square&logo=github&color=fbbf24" alt="GitHub Stars" /></a>
-  <a href="https://github.com/itsdevcode/waybound/network/members"><img src="https://img.shields.io/github/forks/itsdevcode/waybound?style=flat-square&logo=github&color=c084fc" alt="GitHub Forks" /></a>
-  <a href="https://github.com/itsdevcode/waybound/issues"><img src="https://img.shields.io/github/issues/itsdevcode/waybound?style=flat-square&logo=github&color=60a5fa" alt="Open Issues" /></a>
-  <a href="https://github.com/itsdevcode/waybound/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
+  <a href="https://github.com/itsdevcode/waybound/stargazers"><img src="./docs/assets/badges/stars.svg" alt="GitHub Stars" /></a>
+  <a href="https://github.com/itsdevcode/waybound/network/members"><img src="./docs/assets/badges/forks.svg" alt="GitHub Forks" /></a>
+  <a href="https://github.com/itsdevcode/waybound/issues"><img src="./docs/assets/badges/issues.svg" alt="Open Issues" /></a>
+  <a href="https://github.com/itsdevcode/waybound/pulls"><img src="./docs/assets/badges/prs.svg" alt="PRs Welcome" /></a>
 </p>
 
 </div>
