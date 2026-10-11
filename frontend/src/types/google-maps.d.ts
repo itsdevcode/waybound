@@ -6,6 +6,8 @@ declare namespace google {
       constructor(element: HTMLElement, options?: any);
       panTo(latLng: { lat: number; lng: number }): void;
       setZoom(zoom: number): void;
+      getZoom(): number;
+      fitBounds(bounds: any, padding?: any): void;
     }
 
     export class Marker {
@@ -18,6 +20,21 @@ declare namespace google {
     export class Circle {
       constructor(options: any);
       setMap(map: Map | null): void;
+      setCenter(latLng: { lat: number; lng: number }): void;
+      setRadius(radius: number): void;
+    }
+
+    export class Size {
+      constructor(width: number, height: number);
+    }
+
+    export class Point {
+      constructor(x: number, y: number);
+    }
+
+    export class LatLngBounds {
+      constructor();
+      extend(point: { lat: number; lng: number }): void;
     }
 
     export class DirectionsRenderer {

@@ -41,6 +41,7 @@ export function ExploreMapModal({
   onClose,
   onStartQuest,
   onGenerateQuestAtLocation,
+  activeQuest,
 }: ExploreMapModalProps) {
   const { isReady: isGoogleMapsReady } = useGoogleMaps();
 
@@ -319,6 +320,8 @@ export function ExploreMapModal({
                 }}
                 activeQuestGeofenceMeters={selectedQuest?.verification_radius_meters || 100}
                 onRouteCalculated={setRouteInfo}
+                activeQuestClues={activeQuest?.current_clues ?? []}
+                onRecenterUser={() => void acquireLocation()}
               />
             ) : (
               <RadarMapView
@@ -437,9 +440,9 @@ export function ExploreMapModal({
                       {selectedQuest.is_destination_secret
                         ? "Mystery Destination (follow hints)"
                         : routeInfo && !routeInfo.isMystery
-                        ? `Route: ${routeInfo.durationText} (${routeInfo.distanceText})`
+                        ? `Walking route: ${routeInfo.distanceText} (${routeInfo.durationText})`
                         : selectedQuest.distance_meters > 0
-                        ? `${selectedQuest.distance_meters > 1000 ? (selectedQuest.distance_meters / 1000).toFixed(1) + "km" : Math.round(selectedQuest.distance_meters) + "m"}`
+                        ? `Straight-line: ~${selectedQuest.distance_meters > 1000 ? (selectedQuest.distance_meters / 1000).toFixed(1) + "km" : Math.round(selectedQuest.distance_meters) + "m"}`
                         : "Distance N/A"}
                     </span>
                     {!selectedQuest.is_destination_secret && (

@@ -38,6 +38,9 @@ class QuestStepResponse(BaseModel):
     step_order: int
     clue: str
     is_unlocked: bool
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0, description="Genuine intermediate waypoint latitude if present")
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0, description="Genuine intermediate waypoint longitude if present")
+    waypoint_name: str | None = Field(default=None, description="Genuine public landmark name for waypoint if present")
 
     model_config = ConfigDict(from_attributes=True)
 
