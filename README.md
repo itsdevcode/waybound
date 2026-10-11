@@ -80,11 +80,11 @@ flowchart LR
     C --> D["🧩 4. Solve Clues"]
     D --> E["🏆 5. Verify & Level Up"]
 
-    subgraph Exploration Pipeline
-      B -.->|Google Places (New)| P[Discovers Real Public Places]
-      B -.->|Gemma 2 LLM| G[Drafts Story & Progressive Riddles]
-      C -.->|Google Routes API| R[Live Walking Polyline & Distance]
-      E -.->|Haversine Geofence| V[Atomic GPS Arrival Verification]
+    subgraph Pipeline ["Exploration Engine"]
+      B -.-> P["Google Places: Real Public Places"]
+      B -.-> G["Gemma 2: Story & Clues"]
+      C -.-> R["Google Routes: Walking Navigation"]
+      E -.-> V["Haversine: GPS Arrival Verification"]
     end
 ```
 
