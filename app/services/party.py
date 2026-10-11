@@ -472,6 +472,10 @@ class PartyService:
         user: User,
         request: PartyStartQuestRequest,
     ) -> SharedPartyQuestResponse:
+        # STEP 1: Fast reservation transaction with row lock
+        if not self.session.in_transaction():
+            await self.session.begin()
+
         party = await self._get_party_with_members(party_id, for_update=True)
         active_members = [m for m in party.memberships if m.status == "active"]
         my_membership = next((m for m in active_members if m.user_id == user.id), None)
@@ -482,23 +486,53 @@ class PartyService:
         if len(active_members) != 2:
             raise PartyConflictError("Cooperative quests require exactly two explorers in the party.")
 
+        if party.status == "generating_quest":
+            raise PartyConflictError("Cooperative quest generation is already in progress for this fellowship.")
+
         if party.party_quest and party.party_quest.status == "active":
             raise PartyConflictError("Party already has an active cooperative quest.")
 
-        # Generate single shared quest narrative from Google Places + Gemma or Demo
+        # Atomically reserve party state and release DB row lock immediately
+        party.status = "generating_quest"
+        host_id = party.host_id
+        await self.session.commit()
+
+        # STEP 2: Slow external generation (Google Places / Gemma / Demo) executes OUTSIDE DB row lock
         quest_req = QuestCreateRequest(
-            user_id=party.host_id,
+            user_id=host_id,
             available_minutes=request.available_minutes,
             explorer_type=request.explorer_type,
             difficulty=request.difficulty,
             latitude=request.latitude,
             longitude=request.longitude,
         )
-        generated = await self.provider.generate_quest(quest_req)
+        try:
+            generated = await self.provider.generate_quest(quest_req)
+        except Exception:
+            # Revert reservation if external provider fails
+            try:
+                if not self.session.in_transaction():
+                    await self.session.begin()
+                party = await self._get_party_with_members(party_id, for_update=True)
+                if party.status == "generating_quest":
+                    party.status = "active"
+                await self.session.commit()
+            except Exception as reset_err:
+                logger.warning("Failed to reset party reservation status: %s", reset_err)
+            raise
+
+        # STEP 3: Fast transaction to persist the generated quest and split clues
+        if not self.session.in_transaction():
+            await self.session.begin()
+
+        party = await self._get_party_with_members(party_id, for_update=True)
+        active_members = [m for m in party.memberships if m.status == "active"]
+        if party.status != "generating_quest" or len(active_members) != 2:
+            raise PartyConflictError("Fellowship status changed while generating quest narrative.")
 
         # Create underlying Quest model
         quest = Quest(
-            user_id=party.host_id,
+            user_id=host_id,
             title=f"[Co-op] {generated.title}"[:150],
             description=generated.description,
             difficulty=generated.difficulty,
@@ -527,16 +561,42 @@ class PartyService:
         self.session.add(party_quest)
         await self.session.flush()
 
-        # Split Clues: Provide complementary clue subsets for each explorer
-        # Explorer 1 gets odd clues + specific perspective, Explorer 2 gets even clues + specific perspective
-        clues_p1 = [
-            (1, "Compass Riddle (Perspective A)", generated.clues[0] if len(generated.clues) > 0 else "Seek the historical approach."),
-            (2, "Architectural Marker (Perspective A)", generated.clues[2] if len(generated.clues) > 2 else "Observe structural carvings near the threshold."),
-        ]
-        clues_p2 = [
-            (1, "Atmospheric Beacon (Perspective B)", generated.clues[1] if len(generated.clues) > 1 else "Follow the path where shadow meets stone."),
-            (2, "Environmental Survey (Perspective B)", "Look for subtle boundary markings guiding travelers to the landmark focal point."),
-        ]
+        # Split Clues: Location-grounded and complementary without fabricated filler
+        gen_clues = generated.clues or []
+        clues_p1: list[tuple[int, str, str]] = []
+        clues_p2: list[tuple[int, str, str]] = []
+
+        if len(gen_clues) >= 4:
+            clues_p1 = [
+                (1, "Spatial Riddle (Perspective A)", gen_clues[0]),
+                (2, "Architectural Clue (Perspective A)", gen_clues[2]),
+            ]
+            clues_p2 = [
+                (1, "Environmental Cue (Perspective B)", gen_clues[1]),
+                (2, "Landmark Detail (Perspective B)", gen_clues[3]),
+            ]
+        elif len(gen_clues) == 3:
+            clues_p1 = [
+                (1, "Spatial Riddle (Perspective A)", gen_clues[0]),
+                (2, "Architectural Clue (Perspective A)", gen_clues[2]),
+            ]
+            clues_p2 = [
+                (1, "Environmental Cue (Perspective B)", gen_clues[1]),
+            ]
+        elif len(gen_clues) >= 2:
+            clues_p1 = [
+                (1, "Primary Approach (Perspective A)", gen_clues[0]),
+            ]
+            clues_p2 = [
+                (1, "Complementary Perimeter (Perspective B)", gen_clues[1]),
+            ]
+        else:
+            clues_p1 = [
+                (1, "Expedition Vector (Perspective A)", "Navigate toward the vicinity indicated in your field log."),
+            ]
+            clues_p2 = [
+                (1, "Observation Anchor (Perspective B)", "Look for prominent structural markers at the target site."),
+            ]
 
         # First clue for each member is initially revealed
         for step_order, title, text_val in clues_p1:
@@ -574,10 +634,10 @@ class PartyService:
             self.session.add(mv)
 
         party.status = "active"
-        party_id = party.id
+        target_party_id = party.id
         await self.session.commit()
 
-        return await self.get_shared_quest_progress(party_id, user)
+        return await self.get_shared_quest_progress(target_party_id, user)
 
     async def get_shared_quest_progress(
         self,

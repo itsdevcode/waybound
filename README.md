@@ -165,9 +165,12 @@ Follow these steps to demonstrate the full hackathon MVP experience:
 - **Social Mystery Partner (Phase 4B)**:
   - Two-player cooperative mystery quests with split, complementary clues.
   - Server-side authenticated sessions (Bearer tokens) eliminating client-supplied UUID spoofing.
+  - Proof-of-Identity email OTP authentication (`POST /auth/otp/request` and `POST /auth/otp/verify`) with HMAC-SHA256 salted hashes and sliding-window rate limiting.
+  - Dedicated demo authentication (`POST /auth/demo-session`) isolated to the seeded demo explorer and strictly disabled in production (`ALLOW_DEMO_AUTH=false`).
+  - Active session logout and revocation (`POST /auth/logout`).
   - Strict two-member party constraint enforced via atomic database transactions and constraints.
-  - Opaque, cryptographically secure invitation tokens (SHA-256 hashed on server, expiring after 24 hours).
-  - Clue isolation: Explorers only receive their assigned split clues; partner's clues are never returned or narrated.
+  - Fast reservation mechanism (`generating_quest` status) that releases database row locks during external Google Places and Gemma generation.
+  - Location-grounded, complementary split clues derived from real place features without generic filler.
   - Server-side independent GPS arrival verification without disclosing raw coordinates or live location to the partner.
   - Nicknames by default; mutual consent required to reveal real explorer identities.
   - Anti-exploit XP safety rule preserved: Real-world AI observation hypothesis awards 0 XP.
@@ -214,30 +217,35 @@ To test the two-player mystery experience locally using two browser windows (or 
 
 ## Production Security & Architecture Limitations
 
-1. **Authentication Foundation (MVP)**:
-   - The Phase 4B authentication foundation uses cryptographically random session tokens (64-byte hex tokens) mapped to server-side user identities and verified via SHA-256 session token hashes in the database.
-   - All multiplayer operations require a valid `Authorization: Bearer <token>` header; client-supplied UUIDs alone are strictly rejected.
-   - *Production Recommendation*: For public production deployments, upgrade from single-table session hashes to a production identity provider (e.g., Supabase Auth, Firebase Auth, Auth0, or OAuth 2.0 PKCE with refresh token rotation).
-2. **GPS Spoofing & Network Location**:
-   - Coordinates are submitted by the client and validated against the destination geofence on the backend.
-   - While partner coordinates are never shared or leaked between clients, device-level GPS spoofing is theoretically possible without carrier/hardware attestation. Production mobile apps should use Google Play Integrity API or Apple DeviceCheck.
-3. **Invitation Secret Security**:
-   - Invitation tokens are generated using `secrets.token_urlsafe(24)`, hashed with SHA-256 before storage, and expire in 24 hours. Raw tokens are never logged or exposed in general party queries.
-4. **Data Isolation**:
-   - Partner clues and raw coordinates are strictly filtered server-side in `PartyService` prior to Pydantic serialization; client bundles never receive partner clues over the wire.
+1. **Authentication & Identity Proof**:
+   - Unauthenticated creation of sessions via arbitrary client-supplied UUIDs is completely removed.
+   - Explorers authenticate via verified email OTP with HMAC-SHA256 salted hashes and sliding-window rate limiting.
+   - Demo sessions are restricted strictly to seeded demo accounts and completely forbidden when `ENVIRONMENT=production` or `ALLOW_DEMO_AUTH=false`.
+   - `Settings` automatically validates at startup that `AUTH_SECRET` is at least 32 characters and does not match any default dev secrets when running in production.
+2. **Session Revocation & Logout**:
+   - Active tokens can be explicitly revoked via `POST /api/v1/auth/logout`.
+   - Revoked or expired sessions are rejected immediately with 401 Unauthorized.
+3. **Database Concurrency & Row Lock Safety**:
+   - Cooperative quest generation uses an atomic reservation status (`generating_quest`), immediately releasing database row locks while Google Places and Gemma complete their network requests.
+   - Prevents database connection starvation and transaction lock timeouts.
+4. **Data Isolation & Proximity**:
+   - Partner clues and raw coordinates are strictly filtered server-side in `PartyService` prior to Pydantic serialization; client bundles never receive partner clues or partner GPS coordinates over the wire.
 
 ---
 
 ## Running Full Test Suites
 
 ```bash
-# 1. Backend tests (31 async pytest cases covering Auth, Party lifecycle, Split Clues, Verification, and Secrecy)
+# 1. Backend tests (38 async pytest cases covering Auth OTP, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
 PYTHONPATH=. .venv/bin/pytest tests/ -v
 
-# 2. Frontend tests (38 Vitest cases covering Voice narration, Party flows, Bearer Auth, Geo safety, and Secrecy)
+# 2. Frontend tests (40 Vitest cases covering Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)
 cd frontend && npm test
 
 # 3. Frontend Lint and Typecheck
 cd frontend && npm run lint && npm run typecheck
+
+# 4. Production Build
+cd frontend && npm run build
 ```
 

@@ -1,14 +1,36 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.schemas.quest import AvailableMinutesType, DifficultyType, ExplorerType
 
 
 # Auth / Session Schemas
-class SessionCreateRequest(BaseModel):
-    user_id: uuid.UUID = Field(..., description="Explorer ID to authenticate")
+class EmailOtpRequest(BaseModel):
+    email: EmailStr = Field(..., description="Explorer email address")
+
+
+class EmailOtpResponse(BaseModel):
+    message: str
+    email: str
+    expires_in_seconds: int
+    simulated_code: str | None = Field(default=None, description="Returned only in development/test environments")
+
+
+class EmailOtpVerifyRequest(BaseModel):
+    email: EmailStr = Field(..., description="Explorer email address")
+    code: str = Field(..., min_length=4, max_length=10, description="Verification OTP code")
+
+
+class DemoSessionRequest(BaseModel):
+    user_id: uuid.UUID | None = Field(default=None, description="Seeded demo user ID")
+    email: EmailStr | None = Field(default=None, description="Seeded demo user email")
+
+
+class LogoutResponse(BaseModel):
+    success: bool = True
+    message: str = "Session successfully revoked"
 
 
 class SessionResponse(BaseModel):

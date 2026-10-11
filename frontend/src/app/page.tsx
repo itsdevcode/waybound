@@ -15,6 +15,7 @@ import {
   api,
   ApiError,
   getActiveUserId,
+  getAuthToken,
   getSavedActiveQuestId,
   setSavedActiveQuestId,
 } from "@/lib/api";
@@ -83,13 +84,17 @@ export default function HomePage() {
   }, [party]);
 
   // Ensure authenticated session and refresh parties
-  const syncPartyData = useCallback(async (targetUserId?: string) => {
-    const idToFetch = targetUserId || userId || getActiveUserId();
-    if (!idToFetch) return;
-
+  const syncPartyData = useCallback(async () => {
     try {
-      // 1. Establish verified session token
-      await api.auth.createSession(idToFetch);
+      // 1. Establish verified session token without exchanging arbitrary user IDs
+      if (!getAuthToken()) {
+        try {
+          await api.auth.loginDemo();
+        } catch {
+          // If in production or demo auth is disabled, user must log in via OTP
+          return;
+        }
+      }
 
       // 2. Fetch explorer's fellowships
       const partiesList = await api.parties.listMine();
@@ -121,7 +126,7 @@ export default function HomePage() {
     } catch {
       // Silently handle if party service is not initialized yet
     }
-  }, [userId]);
+  }, []);
 
   // Manual refresh callback
   const refreshData = useCallback(async (targetUserId?: string) => {
@@ -187,7 +192,7 @@ export default function HomePage() {
       }
 
       // Sync party state
-      await syncPartyData(idToFetch);
+      await syncPartyData();
     } catch (err: unknown) {
       setConnectionError((err as Error)?.message || "Unexpected error communicating with backend.");
     } finally {
@@ -269,7 +274,7 @@ export default function HomePage() {
         }
 
         // 4. Sync party data
-        await syncPartyData(currentId);
+        await syncPartyData();
       } catch (err: unknown) {
         if (isMounted) {
           setConnectionError((err as Error)?.message || "Failed to communicate with backend.");
@@ -365,7 +370,7 @@ export default function HomePage() {
     setParty(newParty);
     setCoopQuest(null);
     setViewingCoopQuest(false);
-    void syncPartyData(userId);
+    void syncPartyData();
     return newParty;
   }
 
@@ -374,7 +379,7 @@ export default function HomePage() {
     setParty(joined);
     setCoopQuest(null);
     setViewingCoopQuest(false);
-    void syncPartyData(userId);
+    void syncPartyData();
     return joined;
   }
 
@@ -383,7 +388,7 @@ export default function HomePage() {
     setParty(null);
     setCoopQuest(null);
     setViewingCoopQuest(false);
-    void syncPartyData(userId);
+    void syncPartyData();
   }
 
   async function handleDisbandParty(partyId: string) {
@@ -391,7 +396,7 @@ export default function HomePage() {
     setParty(null);
     setCoopQuest(null);
     setViewingCoopQuest(false);
-    void syncPartyData(userId);
+    void syncPartyData();
   }
 
   async function handleSetConsent(partyId: string, consent: boolean) {

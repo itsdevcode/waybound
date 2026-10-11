@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,9 +28,36 @@ class Settings(BaseSettings):
     gemma_timeout_seconds: float = 30.0
     gemma_max_retries: int = 3
     # Security and Session Configuration
+    environment: str = "development"
+    allow_demo_auth: bool = True
     auth_secret: str = "waybound_dev_insecure_auth_secret_must_change_in_production"
     session_token_expire_days: int = 30
     party_invite_expire_hours: int = 48
+    otp_expire_minutes: int = 10
+    otp_max_attempts: int = 5
+    auth_rate_limit_per_minute: int = 10
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if self.environment == "production":
+            self.allow_demo_auth = False
+            insecure_placeholders = [
+                "waybound_dev_insecure_auth_secret_must_change_in_production",
+                "dev_secret_waybound_session_key_change_in_production",
+                "secret",
+                "changeme",
+                "change_me",
+                "password",
+            ]
+            if (
+                not self.auth_secret
+                or len(self.auth_secret.strip()) < 32
+                or self.auth_secret.strip() in insecure_placeholders
+            ):
+                raise ValueError(
+                    "Production configuration error: Insecure or missing AUTH_SECRET. A strong, cryptographically random secret with at least 32 characters is required in production."
+                )
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

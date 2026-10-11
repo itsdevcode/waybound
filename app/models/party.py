@@ -29,7 +29,7 @@ class Party(Base):
     __tablename__ = "parties"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('open', 'active', 'completed', 'disbanded')",
+            "status IN ('open', 'active', 'completed', 'disbanded', 'generating_quest')",
             name="ck_parties_status_valid",
         ),
     )

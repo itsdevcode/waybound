@@ -1,5 +1,21 @@
 import type { AvailableMinutesType, DifficultyType, ExplorerType } from "./api";
 
+export interface EmailOtpRequest {
+  email: string;
+}
+
+export interface EmailOtpResponse {
+  message: string;
+  email: string;
+  expires_in_seconds: number;
+  simulated_code?: string | null;
+}
+
+export interface EmailOtpVerifyRequest {
+  email: string;
+  code: string;
+}
+
 export interface SessionResponse {
   token: string;
   user_id: string;

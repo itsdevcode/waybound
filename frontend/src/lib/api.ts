@@ -9,6 +9,7 @@ import type {
 } from "@/types/api";
 import type {
   AuthMeResponse,
+  EmailOtpResponse,
   PartyCreateRequest,
   PartyJoinRequest,
   PartyResponse,
@@ -274,15 +275,43 @@ export const api = {
    * Phase 4B: Authentication & Identity
    */
   auth: {
-    async createSession(userId: string): Promise<SessionResponse> {
-      const res = await request<SessionResponse>("/api/v1/auth/session", {
+    async requestOtp(email: string): Promise<EmailOtpResponse> {
+      return request<EmailOtpResponse>("/api/v1/auth/otp/request", {
         method: "POST",
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({ email }),
+      });
+    },
+
+    async verifyOtp(email: string, code: string): Promise<SessionResponse> {
+      const res = await request<SessionResponse>("/api/v1/auth/otp/verify", {
+        method: "POST",
+        body: JSON.stringify({ email, code }),
       });
       if (res?.token) {
         setAuthToken(res.token);
       }
       return res;
+    },
+
+    async loginDemo(userId?: string, email?: string): Promise<SessionResponse> {
+      const res = await request<SessionResponse>("/api/v1/auth/demo-session", {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId, email }),
+      });
+      if (res?.token) {
+        setAuthToken(res.token);
+      }
+      return res;
+    },
+
+    async logout(): Promise<void> {
+      try {
+        await request<{ success: boolean; message: string }>("/api/v1/auth/logout", {
+          method: "POST",
+        });
+      } finally {
+        removeAuthToken();
+      }
     },
 
     async getMe(): Promise<AuthMeResponse> {

@@ -1,3 +1,4 @@
+from app.models.otp import EmailOtp
 from app.models.party import (
     MemberVerification,
     Party,
@@ -12,6 +13,7 @@ from app.models.session import Session
 from app.models.user import User
 
 __all__ = [
+    "EmailOtp",
     "MemberVerification",
     "Party",
     "PartyMembership",

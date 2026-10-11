@@ -40,3 +40,30 @@ def create_invite_token() -> tuple[str, str, datetime]:
     token_hash = hash_token(raw_token)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.party_invite_expire_hours)
     return raw_token, token_hash, expires_at
+
+
+def generate_otp_code() -> str:
+    """
+    Generates a cryptographically secure 6-digit numeric OTP.
+    """
+    return f"{secrets.randbelow(900000) + 100000}"
+
+
+def hash_otp(email: str, code: str) -> str:
+    """
+    Computes a salted HMAC-SHA256 hash of the OTP for safe database storage.
+    """
+    import hmac
+    key = settings.auth_secret.encode("utf-8")
+    msg = f"{email.strip().lower()}:{code.strip()}".encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def verify_otp_hash(email: str, code: str, expected_hash: str) -> bool:
+    """
+    Constant-time comparison for OTP validation.
+    """
+    import hmac
+    computed = hash_otp(email, code)
+    return hmac.compare_digest(computed, expected_hash)
+

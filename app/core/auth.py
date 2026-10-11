@@ -1,5 +1,4 @@
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Header, status
@@ -51,19 +50,59 @@ async def get_current_user_optional(
     return db_session_obj.user
 
 
-async def get_current_user(
+async def get_current_session(
     authorization: str | None = Header(default=None, alias="Authorization"),
     session: AsyncSession = Depends(get_session),
-) -> User:
+) -> Session:
     """
-    Enforces authentication requirement on protected endpoints.
-    Never authorizes operations using caller-supplied user UUID alone.
+    Extracts Bearer token and returns active Session model instance.
+    Raises 401 if missing, expired, or revoked.
     """
-    user = await get_current_user_optional(authorization, session)
-    if not user:
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please provide a valid Bearer session token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user
+
+    raw_token = authorization.removeprefix("Bearer ").strip()
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Bearer token is empty.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token_hash = hash_token(raw_token)
+    now = datetime.now(timezone.utc)
+
+    stmt = (
+        select(Session)
+        .options(selectinload(Session.user).selectinload(User.profile))
+        .where(
+            Session.token_hash == token_hash,
+            Session.is_revoked.is_(False),
+            Session.expires_at > now,
+        )
+    )
+    result = await session.execute(stmt)
+    db_session_obj = result.scalars().first()
+
+    if not db_session_obj:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session is invalid, expired, or revoked. Please authenticate again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return db_session_obj
+
+
+async def get_current_user(
+    current_session: Session = Depends(get_current_session),
+) -> User:
+    """
+    Enforces authentication requirement on protected endpoints.
+    Never authorizes operations using caller-supplied user UUID alone.
+    """
+    return current_session.user

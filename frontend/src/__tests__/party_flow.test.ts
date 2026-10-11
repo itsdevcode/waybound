@@ -53,6 +53,53 @@ describe("Social Mystery Partner Frontend Flows", () => {
             (headers as Record<string, string>)?.authorization;
       expect(authHeader).toBe("Bearer secret_bearer_token_xyz");
     });
+
+    it("handles email OTP request and verification flow", async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            message: "Code sent",
+            email: "seeker@waybound.dev",
+            expires_in_seconds: 600,
+            simulated_code: "123456",
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            token: "wbs_token_verified_otp",
+            user_id: "user-otp-1",
+            user_name: "Seeker",
+            explorer_type: "mystery",
+            level: 1,
+            xp: 0,
+            expires_at: new Date().toISOString(),
+          }),
+        });
+
+      const otpReq = await api.auth.requestOtp("seeker@waybound.dev");
+      expect(otpReq.email).toBe("seeker@waybound.dev");
+      expect(otpReq.simulated_code).toBe("123456");
+
+      const session = await api.auth.verifyOtp("seeker@waybound.dev", "123456");
+      expect(session.token).toBe("wbs_token_verified_otp");
+      expect(getAuthToken()).toBe("wbs_token_verified_otp");
+    });
+
+    it("logs out and revokes active token", async () => {
+      setAuthToken("token_to_revoke");
+      expect(getAuthToken()).toBe("token_to_revoke");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, message: "Revoked" }),
+      });
+
+      await api.auth.logout();
+      expect(getAuthToken()).toBeNull();
+    });
   });
 
   describe("Party API Lifecycle", () => {
