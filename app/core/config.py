@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     auth_rate_limit_per_minute: int = 10
 
     # Transactional Email Provider Configuration
-    # Options: "simulated" (development/test only), "resend", "smtp"
+    # Options: "simulated" (development/test only), "resend", "smtp", "gmail_api"
     email_provider: str = "simulated"
     email_from: str = "WAYBOUND <auth@waybound.dev>"
     resend_api_key: str = ""
@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_use_tls: bool = True
+
+    # Gmail API OAuth2 Configuration (used only when EMAIL_PROVIDER=gmail_api)
+    # Never commit these values; supply exclusively via environment variables or secrets manager.
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
+    gmail_sender_email: str = ""
 
     # Multi-worker Rate Limiter Storage: "memory" or "database"
     rate_limit_storage: str = "database"
@@ -132,7 +139,7 @@ class Settings(BaseSettings):
             # In production, simulated email provider is strictly forbidden
             if self.email_provider.lower().strip() in ("simulated", "demo", "test"):
                 raise ValueError(
-                    "Production configuration error: EMAIL_PROVIDER cannot be 'simulated' in production. Configure 'resend' or 'smtp' with valid server credentials."
+                    "Production configuration error: EMAIL_PROVIDER cannot be 'simulated' in production. Configure 'resend', 'smtp', or 'gmail_api' with valid credentials."
                 )
 
             if self.email_provider.lower().strip() == "resend" and not self.resend_api_key:
@@ -144,6 +151,24 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production configuration error: SMTP_HOST must be provided when EMAIL_PROVIDER is 'smtp'."
                 )
+
+            if self.email_provider.lower().strip() == "gmail_api":
+                missing: list[str] = []
+                if not self.gmail_client_id:
+                    missing.append("GMAIL_CLIENT_ID")
+                if not self.gmail_client_secret:
+                    missing.append("GMAIL_CLIENT_SECRET")
+                if not self.gmail_refresh_token:
+                    missing.append("GMAIL_REFRESH_TOKEN")
+                if not self.gmail_sender_email:
+                    missing.append("GMAIL_SENDER_EMAIL")
+                if missing:
+                    raise ValueError(
+                        (
+                            "Production configuration error: The following variables are required when "
+                            f"EMAIL_PROVIDER is 'gmail_api': {', '.join(missing)}."
+                        )
+                    )
 
             # In production, CORS_ORIGINS cannot be wildcard or empty; must be explicit HTTPS allowlist
             raw_cors = self.cors_origins.strip()

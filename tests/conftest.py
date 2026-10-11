@@ -13,11 +13,15 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import app
 from app.models.profile import Profile
 from app.models.user import User
+
+# Default email provider to simulated during test runs to isolate external network/SMTP calls
+settings.email_provider = "simulated"
 
 
 # Test database isolation:
