@@ -422,50 +422,54 @@ Access tokens are refreshed on every OTP send request (not cached). This deliber
    - Add scope: `https://www.googleapis.com/auth/gmail.send`.
    - If *External* and still in **Testing mode**, add the sender Gmail address as a test user. **Note**: OAuth tokens issued in Testing mode expire after **7 days**. Publish the app to remove this limitation.
 4. **Create an OAuth 2.0 Client ID** (*APIs & Services → Credentials → Create Credentials → OAuth client ID*):
-   - Application type: **Web application** (or *Desktop app* for the one-time local consent step).
-   - For the local consent step, add `http://localhost` as an Authorized redirect URI.
-5. **Run the one-time consent flow** to obtain a refresh token:
+   - Application type: **Desktop app**.
+   - Name: `WAYBOUND Gmail Token Generator`.
+   - Download the client secrets file (e.g. `client_secret.json`). Keep this file in a safe local location. Note that `client_secret*.json` is automatically ignored by `.gitignore`.
+
+> [!IMPORTANT]
+> **Google Maps API Key vs. Gmail API OAuth2 Credentials**:
+> `GOOGLE_MAPS_API_KEY` is a server/client API key for Maps & Places. It **cannot** authenticate Gmail API requests. The Gmail REST API strictly requires OAuth2 user consent with an account-authorized refresh token.
+
+5. **Generate the Refresh Token Locally**:
+   Use the dedicated developer utility [scripts/generate_gmail_refresh_token.py](file:///home/arun/projects/waybound/scripts/generate_gmail_refresh_token.py):
    ```bash
-   # Install the Google OAuth2 helper (dev-only, not a production dependency)
+   # Ensure dev dependency is present in your local venv (never in production requirements.txt)
    pip install google-auth-oauthlib
 
-   python3 - <<'EOF'
-   from google_auth_oauthlib.flow import InstalledAppFlow
-   import json
+   # Run local OAuth loopback flow
+   python3 scripts/generate_gmail_refresh_token.py --credentials-file /path/to/client_secret.json
 
-   flow = InstalledAppFlow.from_client_secrets_file(
-       "client_secret.json",  # Downloaded from Google Cloud Console
-       scopes=["https://www.googleapis.com/auth/gmail.send"],
-   )
-   creds = flow.run_local_server(port=0)
-   print(json.dumps({
-       "client_id": creds.client_id,
-       "client_secret": creds.client_secret,
-       "refresh_token": creds.refresh_token,
-   }, indent=2))
-   EOF
+   # To display the full unmasked refresh token for copying into Render or .env:
+   python3 scripts/generate_gmail_refresh_token.py --credentials-file /path/to/client_secret.json --show-refresh-token
    ```
-   Copy the printed values — these are your one-time credentials.
-6. **Set backend environment variables** (never commit to source control):
+   - The script opens your browser for Google consent.
+   - Authorize the dedicated WAYBOUND sender Gmail address.
+   - It captures the offline refresh token via loopback redirect (`prompt='consent'`, `access_type='offline'`).
+   - If Google does not return a refresh token, revoke access in your Google Account security permissions and retry.
+
+6. **Set Backend Environment Variables on Render & Local `.env`** (never commit to source control):
    ```bash
    EMAIL_PROVIDER=gmail_api
-   EMAIL_FROM="WAYBOUND <you@gmail.com>"
-   GMAIL_CLIENT_ID=<your_client_id>
-   GMAIL_CLIENT_SECRET=<your_client_secret>
+   EMAIL_FROM="WAYBOUND <your_sender@gmail.com>"
+   GMAIL_CLIENT_ID=<your_client_id_from_client_secret.json>
+   GMAIL_CLIENT_SECRET=<your_client_secret_from_client_secret.json>
    GMAIL_REFRESH_TOKEN=<your_refresh_token>
-   GMAIL_SENDER_EMAIL="WAYBOUND <you@gmail.com>"
+   GMAIL_SENDER_EMAIL="WAYBOUND <your_sender@gmail.com>"
    ```
 
-### 3. Refresh Token Lifecycle & Expiration
+### 3. Refresh Token Lifecycle, Limits & Production Considerations
 
-| OAuth Consent Mode | Refresh Token Lifetime |
-| --- | --- |
-| **Testing** (≤ 100 users, external app) | **7 days** — expires automatically. Must re-run consent flow. |
-| **Published** (external, verified) | Indefinite, unless revoked or app permissions changed. |
-| **Internal** (Google Workspace only) | Indefinite within the organization. |
+| OAuth Consent Mode | Refresh Token Lifetime | Sending Quotas |
+| --- | --- | --- |
+| **Testing** (≤ 100 users, external app) | **7 days** — expires automatically. | ~500 messages/day (Personal Gmail) |
+| **Published** (external, verified) | Indefinite, unless revoked or app permissions changed. | ~500 messages/day (Personal Gmail) / 2,000/day (Google Workspace) |
+| **Internal** (Google Workspace only) | Indefinite within the organization. | 2,000 messages/day |
 
 > [!WARNING]
-> If your OAuth app is in **Testing mode**, the refresh token expires after **7 days**. WAYBOUND will begin returning `EmailDeliveryError: Gmail OAuth2 refresh token is invalid or revoked` errors once it expires. To fix: either publish the app (requires Google verification for sensitive scopes) or re-run the consent flow each week.
+> If your OAuth app is in **Testing mode**, the refresh token expires after **7 days**. WAYBOUND will begin returning `EmailDeliveryError: Gmail OAuth2 refresh token is invalid or revoked` errors once it expires.
+> **Production Recommendation**:
+> - For internal domains or testing: Re-run the refresh token helper every 7 days, or move the app to **In production** in Google Cloud Console.
+> - For high volume commercial applications (> 500 OTPs/day): Use a dedicated transactional service such as **Resend** or SMTP relay instead.
 
 > [!CAUTION]
 > The refresh token grants access to send email as the authorized account. Treat it with the same security posture as a private key. Never commit it to source control, log it, or include it in environment files that are versioned.
