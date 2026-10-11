@@ -10,13 +10,21 @@ from app.core.config import settings
 from app.schemas.place import PlaceCandidate
 from app.schemas.quest import QuestCreateRequest
 from app.services.places import GooglePlacesService
-from app.services.providers.base import QuestGenerationResult, QuestProvider
+from app.services.providers.base import (
+    QuestGenerationResult,
+    QuestProvider,
+    StepWaypointCandidate,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class GemmaQuestStructuredOutput(BaseModel):
-    selected_place_id: str = Field(..., description="The place_id of the selected candidate")
+    selected_place_id: str = Field(..., description="The place_id of the selected final destination candidate")
+    intermediate_waypoint_place_ids: list[str | None] = Field(
+        default_factory=list,
+        description="Optional list of place_ids from the candidate list to serve as intermediate clue waypoints. Max 2.",
+    )
     title: str = Field(..., max_length=150, description="RPG-style quest title")
     story: str = Field(..., description="Immersive adventure backstory and atmosphere")
     clues: list[str] = Field(
@@ -89,29 +97,31 @@ Here are real nearby candidate locations discovered via Google Places:
 {candidate_list_text}
 
 TASK INSTRUCTIONS:
-1. Select EXACTLY ONE location from the candidate list by its `place_id`. You MUST NOT invent any place or place_id.
-2. Generate an RPG-style quest title (maximum 150 characters).
-3. Create an immersive story (backstory and atmosphere matching the explorer archetype).
-4. Provide EXACTLY THREE progressive clues:
-   - Clue 1: Atmospheric directional riddle pointing toward the general area. MUST NOT reveal the destination name.
-   - Clue 2: Distinctive architectural or natural landmark hint near the target. MUST NOT reveal the destination name.
-   - Clue 3: Detailed environmental clue that guides the explorer right to the specific spot.
-5. Create a verification prompt and concise verification answer:
-   - Challenge the explorer to observe a prominent physical feature at this public landmark (e.g., color of plaque, type of tree/statue, architectural style, inscription date, fountain motif).
+1. Select EXACTLY ONE location from the candidate list by its `place_id` as the final secret destination (`selected_place_id`). You MUST NOT invent any place or place_id.
+2. If other distinct candidates exist between the explorer and the destination, you may optionally select up to 2 distinct intermediate waypoint place_ids from the candidate list (`intermediate_waypoint_place_ids`) to associate with Clue 1 or Clue 2. Do not select the final destination as an intermediate waypoint. If no suitable intermediate waypoint exists, pass an empty list `[]`.
+3. Generate an RPG-style quest title (maximum 150 characters).
+4. Create an immersive story (backstory and atmosphere matching the explorer archetype).
+5. Provide EXACTLY THREE progressive clues:
+   - Clue 1: Atmospheric directional riddle pointing toward the first waypoint or area. MUST NOT reveal the destination name.
+   - Clue 2: Distinctive architectural or natural landmark hint near the target or intermediate waypoint. MUST NOT reveal the destination name.
+   - Clue 3: Detailed environmental clue that guides the explorer right to the specific destination spot.
+6. Create a verification prompt and concise verification answer:
+   - Challenge the explorer to observe a prominent physical feature at the final destination (e.g., color of plaque, type of tree/statue, architectural style, inscription date, fountain motif).
    - The verification answer must be short and direct (1-3 words).
-6. Set appropriate difficulty ("easy", "medium", or "hard") and reward XP (100 to 500).
+7. Set appropriate difficulty ("easy", "medium", or "hard") and reward XP (100 to 500).
 
 Return ONLY a valid JSON object with this exact structure:
 {{
-  "selected_place_id": "<place_id from candidate list>",
+  "selected_place_id": "<place_id of destination from candidate list>",
+  "intermediate_waypoint_place_ids": ["<place_id from candidate list>", "<optional second place_id>"],
   "title": "<RPG quest title>",
   "story": "<immersive backstory>",
   "clues": [
-    "<Clue 1 riddle without revealing place name>",
-    "<Clue 2 landmark hint without revealing place name>",
+    "<Clue 1 riddle without revealing destination name>",
+    "<Clue 2 landmark hint without revealing destination name>",
     "<Clue 3 close environmental detail>"
   ],
-  "verification_prompt": "<Question asking what feature is visible at the site>",
+  "verification_prompt": "<Question asking what feature is visible at destination>",
   "verification_answer": "<concise expected observation>",
   "difficulty": "{request.difficulty}",
   "reward_xp": 250
@@ -333,6 +343,44 @@ Return ONLY a valid JSON object with this exact structure:
                         re.escape(word), "the hidden site", structured.clues[idx], flags=re.IGNORECASE
                     )
 
+        # Validate and associate intermediate waypoints with clues (Feature 4 & 5)
+        # Select genuine candidates that are distinct from the final destination
+        other_candidates = [
+            c for c in candidates if c.place_id != selected_candidate.place_id
+        ]
+        other_by_id = {c.place_id: c for c in other_candidates}
+
+        step_waypoints: list[StepWaypointCandidate | None] = []
+        for wp_id in structured.intermediate_waypoint_place_ids:
+            if wp_id and wp_id in other_by_id:
+                cand = other_by_id[wp_id]
+                step_waypoints.append(
+                    StepWaypointCandidate(
+                        place_id=cand.place_id,
+                        name=cand.name,
+                        latitude=cand.latitude,
+                        longitude=cand.longitude,
+                    )
+                )
+
+        # If LLM didn't choose waypoints but other suitable candidates exist,
+        # assign up to 2 closest candidates as intermediate waypoints for clues 1 and 2
+        if not step_waypoints and other_candidates:
+            # Sort candidates by distance to explorer
+            sorted_others = sorted(
+                other_candidates,
+                key=lambda c: c.distance_meters if c.distance_meters is not None else 0.0,
+            )
+            for c in sorted_others[:2]:
+                step_waypoints.append(
+                    StepWaypointCandidate(
+                        place_id=c.place_id,
+                        name=c.name,
+                        latitude=c.latitude,
+                        longitude=c.longitude,
+                    )
+                )
+
         return QuestGenerationResult(
             title=structured.title[:150],
             description=structured.story,
@@ -345,4 +393,5 @@ Return ONLY a valid JSON object with this exact structure:
             verification_prompt=structured.verification_prompt,
             verification_answer=structured.verification_answer,
             clues=structured.clues[:3],
+            waypoints=step_waypoints,
         )

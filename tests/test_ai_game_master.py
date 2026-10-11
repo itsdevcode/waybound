@@ -564,3 +564,252 @@ async def test_gemma_json_cleaning_and_retry(test_user: User):
     assert result.title == "Park Secret"
     assert call_count == 2
 
+
+@pytest.mark.asyncio
+async def test_real_quest_generation_with_validated_waypoints(test_user: User, monkeypatch):
+    """
+    Demonstrates that generating a real quest produces usable, validated intermediate
+    waypoints from Google Places candidates and associates them with clues.
+    """
+    places_response = {
+        "places": [
+            {
+                "id": "ChIJ_destination_landmark",
+                "displayName": {"text": "Palace of Fine Arts Rotunda", "languageCode": "en"},
+                "location": {"latitude": 37.8020, "longitude": -122.4488},
+                "primaryType": "historical_landmark",
+                "formattedAddress": "3301 Lyon St, San Francisco, CA 94123",
+                "businessStatus": "OPERATIONAL",
+            },
+            {
+                "id": "ChIJ_intermediate_waypoint_1",
+                "displayName": {"text": "Lyon Street Steps", "languageCode": "en"},
+                "location": {"latitude": 37.7940, "longitude": -122.4460},
+                "primaryType": "tourist_attraction",
+                "formattedAddress": "Lyon St, San Francisco, CA 94123",
+                "businessStatus": "OPERATIONAL",
+            },
+            {
+                "id": "ChIJ_intermediate_waypoint_2",
+                "displayName": {"text": "Exploratorium Marina Bridge", "languageCode": "en"},
+                "location": {"latitude": 37.8010, "longitude": -122.4470},
+                "primaryType": "monument",
+                "formattedAddress": "Marina Blvd, San Francisco, CA 94123",
+                "businessStatus": "OPERATIONAL",
+            },
+        ]
+    }
+
+    gemma_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps({
+                                "selected_place_id": "ChIJ_destination_landmark",
+                                "intermediate_waypoint_place_ids": [
+                                    "ChIJ_intermediate_waypoint_1",
+                                    "ChIJ_intermediate_waypoint_2",
+                                ],
+                                "title": "The Greco-Roman Echoes",
+                                "story": "Follow the ancient path to the great columns.",
+                                "clues": [
+                                    "Ascend the manicured hillside stairs overlooking the bay.",
+                                    "Cross the arched stone bridge flanking the tranquil lagoon.",
+                                    "Stand directly under the monumental dome rotunda.",
+                                ],
+                                "verification_prompt": "What color are the urns around the rotunda?",
+                                "verification_answer": "terracotta",
+                                "difficulty": "medium",
+                                "reward_xp": 300,
+                            })
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    async def places_handler(request):
+        return Response(200, json=places_response)
+
+    async def gemma_handler(request):
+        return Response(200, json=gemma_response)
+
+    places_client = AsyncClient(transport=httpx_mock_transport(places_handler))
+    gemma_client = AsyncClient(transport=httpx_mock_transport(gemma_handler))
+
+    places_svc = GooglePlacesService(api_key="test_places_key", client=places_client)
+    provider = GemmaQuestProvider(
+        places_service=places_svc,
+        api_key="test_gemma_key",
+        http_client=gemma_client,
+    )
+
+    from app.schemas.quest import QuestCreateRequest
+    req = QuestCreateRequest(
+        user_id=test_user.id,
+        available_minutes=30,
+        explorer_type="discovery",
+        difficulty="medium",
+        latitude=37.7930,
+        longitude=-122.4450,
+    )
+
+    result = await provider.generate_quest(req)
+
+    # 1. Destination is accurately selected and validated
+    assert result.destination_name == "Palace of Fine Arts Rotunda"
+    assert result.destination_latitude == 37.8020
+    assert result.destination_longitude == -122.4488
+
+    # 2. Intermediate waypoints are properly validated against real places candidates
+    assert len(result.waypoints) == 2
+    wp1 = result.waypoints[0]
+    assert wp1 is not None
+    assert wp1.place_id == "ChIJ_intermediate_waypoint_1"
+    assert wp1.name == "Lyon Street Steps"
+    assert wp1.latitude == 37.7940
+    assert wp1.longitude == -122.4460
+
+    wp2 = result.waypoints[1]
+    assert wp2 is not None
+    assert wp2.place_id == "ChIJ_intermediate_waypoint_2"
+    assert wp2.name == "Exploratorium Marina Bridge"
+    assert wp2.latitude == 37.8010
+    assert wp2.longitude == -122.4470
+
+
+@pytest.mark.asyncio
+async def test_waypoint_secrecy_and_progressive_unlocking(client: AsyncClient, db_session):
+    """
+    Tests end-to-end waypoint persistence, progressive unlocking, and destination secrecy:
+    1. Waypoints are persisted in the database.
+    2. Locked clues and secret destinations do NOT expose coordinates.
+    3. Starting the quest unlocks the first clue and reveals ONLY the first waypoint coordinates.
+    4. Unlocking the next hint reveals the second waypoint coordinates.
+    5. The final destination remains secret until the quest is completed.
+    """
+    import uuid
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"waypoint_tester_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "Waypoint Explorer", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # Setup mock provider that generates validated waypoints
+    from app.services.providers.base import QuestGenerationResult, StepWaypointCandidate
+    from app.services.quest import QuestService
+
+    class MockWaypointProvider:
+        async def generate_quest(self, request):
+            return QuestGenerationResult(
+                title="Trail of the Seven Columns",
+                description="Uncover the secrets of the bay.",
+                difficulty="medium",
+                estimated_minutes=30,
+                reward_xp=250,
+                destination_name="Secret Palace Rotunda",
+                destination_latitude=37.8020,
+                destination_longitude=-122.4488,
+                verification_prompt="What is inscribed on the pedestal?",
+                verification_answer="1915",
+                clues=[
+                    "Head to the hilltop stairs.",
+                    "Cross the arched bridge.",
+                    "Look behind the rotunda columns.",
+                ],
+                waypoints=[
+                    StepWaypointCandidate(
+                        place_id="place_wp_1",
+                        name="Hilltop Stairs",
+                        latitude=37.7940,
+                        longitude=-122.4460,
+                    ),
+                    StepWaypointCandidate(
+                        place_id="place_wp_2",
+                        name="Arched Bridge",
+                        latitude=37.8010,
+                        longitude=-122.4470,
+                    ),
+                    None,
+                ],
+            )
+
+    from app.repositories.quest import QuestRepository
+    from app.repositories.user import UserRepository
+
+    quest_service = QuestService(
+        session=db_session,
+        quest_repository=QuestRepository(db_session),
+        user_repository=UserRepository(db_session),
+        quest_provider=MockWaypointProvider(),
+    )
+
+    from app.schemas.quest import QuestCreateRequest
+    created_quest = await quest_service.generate_quest(
+        QuestCreateRequest(
+            user_id=user.id,
+            available_minutes=30,
+            explorer_type="discovery",
+            difficulty="medium",
+            latitude=37.7930,
+            longitude=-122.4450,
+        )
+    )
+
+    # In draft mode, all clues are locked -> 0 clues visible
+    assert created_quest.status == "draft"
+    assert len(created_quest.current_clues) == 0
+    assert created_quest.destination_name is None
+
+    # Verify directly in the database that waypoints are persisted
+    stored_quest = await QuestRepository(db_session).get_by_id(created_quest.id)
+    assert stored_quest is not None
+    assert len(stored_quest.steps) == 3
+    assert stored_quest.steps[0].waypoint_place_id == "place_wp_1"
+    assert float(stored_quest.steps[0].waypoint_latitude) == 37.7940
+    assert float(stored_quest.steps[0].waypoint_longitude) == -122.4460
+    assert stored_quest.steps[0].waypoint_name == "Hilltop Stairs"
+
+    assert stored_quest.steps[1].waypoint_place_id == "place_wp_2"
+    assert float(stored_quest.steps[1].waypoint_latitude) == 37.8010
+    assert float(stored_quest.steps[1].waypoint_longitude) == -122.4470
+
+    # Start the quest -> unlocks Hint 1
+    started_quest = await quest_service.start_quest(created_quest.id)
+    assert started_quest.status == "active"
+    assert len(started_quest.current_clues) == 1
+    assert started_quest.destination_name is None  # Still secret!
+
+    clue1 = started_quest.current_clues[0]
+    assert clue1.step_order == 1
+    assert clue1.is_unlocked is True
+    assert clue1.latitude == 37.7940
+    assert clue1.longitude == -122.4460
+    assert clue1.waypoint_name == "Hilltop Stairs"
+
+    # Unlock Hint 2 -> reveals Waypoint 2
+    hint2_res = await quest_service.unlock_hint(created_quest.id)
+    assert hint2_res.all_hints_unlocked is False
+    assert len(hint2_res.quest.current_clues) == 2
+    assert hint2_res.quest.destination_name is None  # Still secret!
+
+    clue2 = hint2_res.quest.current_clues[1]
+    assert clue2.step_order == 2
+    assert clue2.latitude == 37.8010
+    assert clue2.longitude == -122.4470
+    assert clue2.waypoint_name == "Arched Bridge"
+
+    # Unlock Hint 3 -> text clue with no waypoint (general destination exploration)
+    hint3_res = await quest_service.unlock_hint(created_quest.id)
+    assert hint3_res.all_hints_unlocked is True
+    assert len(hint3_res.quest.current_clues) == 3
+    clue3 = hint3_res.quest.current_clues[2]
+    assert clue3.step_order == 3
+    assert clue3.latitude is None  # No fake coordinates invented!
+    assert clue3.longitude is None
+    assert hint3_res.quest.destination_name is None  # Still secret!
+
+
