@@ -250,8 +250,8 @@ To protect quota and optimize free-tier credit consumption:
 
 1. **Authentication & Identity Proof**:
    - Unauthenticated creation of sessions via arbitrary client-supplied UUIDs is completely removed.
-   - Explorers authenticate via verified email OTP dispatched through configurable transactional email providers (`resend`, `smtp`, or `simulated` for dev/test).
-   - In production, simulated email delivery is strictly rejected at startup; transactional email provider credentials (`RESEND_API_KEY` or `SMTP_HOST`/`SMTP_PASSWORD`) are required and kept strictly server-side.
+   - Explorers authenticate via verified email OTP dispatched through configurable transactional email providers (`resend`, `smtp`, `gmail_api`, or `simulated` for dev/test).
+   - In production, simulated email delivery is strictly rejected at startup; transactional email provider credentials (`RESEND_API_KEY`, `SMTP_HOST`/`SMTP_PASSWORD`, or Gmail OAuth2 credentials) are required and kept strictly server-side.
    - OTP codes are **never** returned in API responses, logs, or error messages in production.
    - OTP records are committed only after the email provider confirms successful delivery acceptance, and are automatically rolled back upon provider errors.
    - Brute-force protection invalidates OTP codes after 5 failed attempts; replay and expired attempts are strictly rejected.
@@ -338,9 +338,13 @@ The blueprint declares three synchronized components:
 | `DB_MAX_OVERFLOW` | Backend | Optional | Max connection overflow per worker. Default: `5`. |
 | `TRUSTED_PROXIES` | Backend | Optional | Trusted proxy boundary for header validation. Default: `127.0.0.1,::1,10.0.0.0/8`. |
 | `CORS_ORIGINS` | Backend | **Yes** | Explicit public HTTPS frontend origin (e.g. `https://waybound-frontend.onrender.com` or custom domain). In production, wildcard `*`, empty values, and internal hostnames are strictly rejected. Configured with `sync: false` to allow dashboard customization. |
-| `EMAIL_PROVIDER` | Backend | **Yes** | `resend` (recommended) or `smtp`. |
+| `EMAIL_PROVIDER` | Backend | **Yes** | `resend` (recommended), `smtp`, or `gmail_api`. |
 | `EMAIL_FROM` | Backend | **Yes** | Verified sender address (e.g. `WAYBOUND <auth@yourdomain.com>` or `onboarding@resend.dev`). Placeholders like `waybound.dev` are rejected. |
 | `RESEND_API_KEY` | Backend | **Conditional** | Required if `EMAIL_PROVIDER=resend`. Server-side only. |
+| `GMAIL_CLIENT_ID` | Backend | **Conditional** | Required if `EMAIL_PROVIDER=gmail_api`. OAuth2 client ID from Google Cloud Console. Server-side only. |
+| `GMAIL_CLIENT_SECRET` | Backend | **Conditional** | Required if `EMAIL_PROVIDER=gmail_api`. OAuth2 client secret. Server-side only. |
+| `GMAIL_REFRESH_TOKEN` | Backend | **Conditional** | Required if `EMAIL_PROVIDER=gmail_api`. Long-lived refresh token from the OAuth consent flow. Server-side only. |
+| `GMAIL_SENDER_EMAIL` | Backend | **Conditional** | Required if `EMAIL_PROVIDER=gmail_api`. Sender address (e.g. `WAYBOUND <you@gmail.com>`). Must be the same account used in the consent flow. |
 | `QUEST_PROVIDER` | Backend | Optional | `demo` (default) or `google_places_gemma`. |
 | `GOOGLE_MAPS_API_KEY` | Backend | Optional | Required if `QUEST_PROVIDER=google_places_gemma`. Server-side only. |
 | `GEMMA_API_KEY` | Backend | Optional | Required if `QUEST_PROVIDER=google_places_gemma`. Server-side only. |
@@ -387,6 +391,94 @@ Render provisions services with initial defaults. Depending on naming collisions
 6. **External AI Keys (Backend Service -> Environment, Optional)**:
    - `GOOGLE_MAPS_API_KEY` & `GEMMA_API_KEY`: Required if setting `QUEST_PROVIDER=google_places_gemma`.
    - `ELEVENLABS_API_KEY`: Required if setting `ELEVENLABS_ENABLED=true`.
+
+---
+
+---
+
+## Phase 4E: Gmail API Email Provider
+
+WAYBOUND supports Gmail as an alternative transactional email provider via the Gmail REST API with OAuth 2.0 authentication.
+
+> [!NOTE]
+> **Personal vs. service account**: A standard personal Gmail account is limited to roughly **500 emails per day** via the Gmail API (500 users × 1 send each). For high-volume production deployments, use **Resend** (3,000 free emails/month) or a dedicated SMTP relay instead.
+
+### 1. Architecture
+
+```
+GmailApiEmailService
+  └─ POST https://oauth2.googleapis.com/token       ← exchange refresh token → access token
+  └─ POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send  ← RFC-2822 base64url payload
+```
+
+Access tokens are refreshed on every OTP send request (not cached). This deliberately trades one extra HTTPS round-trip for zero stale-token risk across multi-worker deployments.
+
+### 2. One-Time OAuth2 Setup
+
+1. **Create a Google Cloud project** at [console.cloud.google.com](https://console.cloud.google.com).
+2. **Enable the Gmail API** under *APIs & Services → Library → Gmail API → Enable*.
+3. **Configure the OAuth consent screen** (*APIs & Services → OAuth consent screen*):
+   - App type: **Internal** (if using Google Workspace) or **External**.
+   - Add scope: `https://www.googleapis.com/auth/gmail.send`.
+   - If *External* and still in **Testing mode**, add the sender Gmail address as a test user. **Note**: OAuth tokens issued in Testing mode expire after **7 days**. Publish the app to remove this limitation.
+4. **Create an OAuth 2.0 Client ID** (*APIs & Services → Credentials → Create Credentials → OAuth client ID*):
+   - Application type: **Web application** (or *Desktop app* for the one-time local consent step).
+   - For the local consent step, add `http://localhost` as an Authorized redirect URI.
+5. **Run the one-time consent flow** to obtain a refresh token:
+   ```bash
+   # Install the Google OAuth2 helper (dev-only, not a production dependency)
+   pip install google-auth-oauthlib
+
+   python3 - <<'EOF'
+   from google_auth_oauthlib.flow import InstalledAppFlow
+   import json
+
+   flow = InstalledAppFlow.from_client_secrets_file(
+       "client_secret.json",  # Downloaded from Google Cloud Console
+       scopes=["https://www.googleapis.com/auth/gmail.send"],
+   )
+   creds = flow.run_local_server(port=0)
+   print(json.dumps({
+       "client_id": creds.client_id,
+       "client_secret": creds.client_secret,
+       "refresh_token": creds.refresh_token,
+   }, indent=2))
+   EOF
+   ```
+   Copy the printed values — these are your one-time credentials.
+6. **Set backend environment variables** (never commit to source control):
+   ```bash
+   EMAIL_PROVIDER=gmail_api
+   EMAIL_FROM="WAYBOUND <you@gmail.com>"
+   GMAIL_CLIENT_ID=<your_client_id>
+   GMAIL_CLIENT_SECRET=<your_client_secret>
+   GMAIL_REFRESH_TOKEN=<your_refresh_token>
+   GMAIL_SENDER_EMAIL="WAYBOUND <you@gmail.com>"
+   ```
+
+### 3. Refresh Token Lifecycle & Expiration
+
+| OAuth Consent Mode | Refresh Token Lifetime |
+| --- | --- |
+| **Testing** (≤ 100 users, external app) | **7 days** — expires automatically. Must re-run consent flow. |
+| **Published** (external, verified) | Indefinite, unless revoked or app permissions changed. |
+| **Internal** (Google Workspace only) | Indefinite within the organization. |
+
+> [!WARNING]
+> If your OAuth app is in **Testing mode**, the refresh token expires after **7 days**. WAYBOUND will begin returning `EmailDeliveryError: Gmail OAuth2 refresh token is invalid or revoked` errors once it expires. To fix: either publish the app (requires Google verification for sensitive scopes) or re-run the consent flow each week.
+
+> [!CAUTION]
+> The refresh token grants access to send email as the authorized account. Treat it with the same security posture as a private key. Never commit it to source control, log it, or include it in environment files that are versioned.
+
+### 4. Error Handling Summary
+
+| Error Condition | Gmail API Response | WAYBOUND Behavior |
+| --- | --- | --- |
+| Revoked or expired refresh token | 400 `invalid_grant` | `EmailDeliveryError` — re-run OAuth consent flow |
+| Wrong client ID / secret | 401 from token endpoint | `EmailDeliveryError` — check credentials |
+| Gmail API quota exceeded | 429 | `EmailDeliveryError` — retry or switch provider |
+| Gmail API server error | 5xx | `EmailDeliveryError` — transient; retry |
+| Network timeout / DNS failure | `httpx.RequestError` | `EmailDeliveryError` — check connectivity |
 
 ---
 
