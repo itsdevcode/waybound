@@ -122,20 +122,39 @@ Return ONLY a valid JSON object with this exact structure:
         """Extracts JSON substring from LLM response and parses it."""
         cleaned = raw_text.strip()
         # Remove markdown codeblocks if present
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
-            cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE)
+        if "```" in cleaned:
+            # Match ```json ... ``` or ``` ... ```
+            codeblock_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+            if codeblock_match:
+                cleaned = codeblock_match.group(1).strip()
+            else:
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
+                cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE)
 
         # Find the first { and last }
         start = cleaned.find("{")
         end = cleaned.rfind("}")
-        if start != -1 and end != -1:
+        if start != -1 and end != -1 and end > start:
             cleaned = cleaned[start : end + 1]
 
+        # First attempt: standard json.loads
         try:
             return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Second attempt: handle common LLM JSON syntax issues (trailing commas, unescaped newlines)
+        try:
+            # Remove trailing commas before closing braces/brackets
+            fixed = re.sub(r",\s*([\]}])", r"\1", cleaned)
+            return json.loads(fixed)
         except json.JSONDecodeError as e:
-            logger.error("Failed to decode JSON from Gemma output: %s", type(e).__name__)
+            snippet = raw_text[:300].replace("\n", " ")
+            logger.error(
+                "Failed to decode JSON from Gemma output: %s. Snippet: %r",
+                type(e).__name__,
+                snippet,
+            )
             raise GemmaProviderError(
                 "Gemma model returned invalid JSON structure", status_code=502
             )
@@ -158,7 +177,11 @@ Return ONLY a valid JSON object with this exact structure:
             url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+                "generationConfig": {
+                    "temperature": 0.4,
+                    "maxOutputTokens": 2048,
+                    "responseMimeType": "application/json",
+                },
             }
             headers = {"Content-Type": "application/json"}
         else:
@@ -167,7 +190,8 @@ Return ONLY a valid JSON object with this exact structure:
             payload = {
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7,
+                "temperature": 0.4,
+                "response_format": {"type": "json_object"},
             }
             headers = {
                 "Content-Type": "application/json",
@@ -255,14 +279,25 @@ Return ONLY a valid JSON object with this exact structure:
 
         # Build prompt with candidates and generate narrative with Gemma
         prompt = self._build_prompt(request, candidates)
-        raw_text = await self._call_gemma_api(prompt)
-        parsed_data = self._clean_and_parse_json(raw_text)
 
-        # Validate with Pydantic
-        try:
-            structured = GemmaQuestStructuredOutput.model_validate(parsed_data)
-        except ValidationError as e:
-            logger.error("Pydantic validation failed for Gemma output: %s", type(e).__name__)
+        # Attempt generation and parsing with retry on JSON / structure errors
+        structured: GemmaQuestStructuredOutput | None = None
+        last_parse_err: Exception | None = None
+
+        for parse_attempt in range(1, 3):
+            raw_text = await self._call_gemma_api(prompt)
+            try:
+                parsed_data = self._clean_and_parse_json(raw_text)
+                structured = GemmaQuestStructuredOutput.model_validate(parsed_data)
+                break
+            except (GemmaProviderError, ValidationError) as e:
+                last_parse_err = e
+                logger.warning("Gemma output parse/validation attempt %d failed: %s", parse_attempt, e)
+                continue
+
+        if structured is None:
+            if isinstance(last_parse_err, GemmaProviderError):
+                raise last_parse_err
             raise GemmaProviderError(
                 "Gemma generated invalid quest structure", status_code=502
             )

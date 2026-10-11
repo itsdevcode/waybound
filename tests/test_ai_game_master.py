@@ -489,3 +489,78 @@ async def test_safe_http_error_handling_configuration_error(client: AsyncClient,
     assert "Server configuration error" in res.json()["detail"]
     assert "GOOGLE_MAPS_API_KEY" not in res.json()["detail"]
 
+
+@pytest.mark.asyncio
+async def test_gemma_json_cleaning_and_retry(test_user: User):
+    """Test that Gemma provider successfully handles markdown fences, trailing commas, and recovers via retry."""
+    async def places_handler(request):
+        return Response(200, json={
+            "places": [{
+                "id": "ChIJ_real_candidate",
+                "displayName": {"text": "Golden Gate Park", "languageCode": "en"},
+                "location": {"latitude": 37.7694, "longitude": -122.4862},
+                "primaryType": "park",
+                "businessStatus": "OPERATIONAL",
+            }]
+        })
+
+    call_count = 0
+
+    async def gemma_handler(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First attempt returns malformed non-JSON text
+            return Response(200, json={
+                "candidates": [{
+                    "content": {"parts": [{"text": "Sorry, I cannot answer in JSON right now."}]}
+                }]
+            })
+        # Second attempt returns JSON with markdown fence and trailing commas
+        raw_json_with_trailing_commas = """```json
+{
+  "selected_place_id": "ChIJ_real_candidate",
+  "title": "Park Secret",
+  "story": "Explore the park.",
+  "clues": [
+    "Clue 1",
+    "Clue 2",
+    "Clue 3",
+  ],
+  "verification_prompt": "What color is the gate?",
+  "verification_answer": "green",
+  "difficulty": "medium",
+  "reward_xp": 250,
+}
+```"""
+        return Response(200, json={
+            "candidates": [{
+                "content": {"parts": [{"text": raw_json_with_trailing_commas}]}
+            }]
+        })
+
+    places_client = AsyncClient(transport=httpx_mock_transport(places_handler))
+    gemma_client = AsyncClient(transport=httpx_mock_transport(gemma_handler))
+
+    places_service = GooglePlacesService(api_key="test_key", client=places_client)
+    provider = GemmaQuestProvider(
+        places_service=places_service,
+        api_key="test_gemma_key",
+        http_client=gemma_client,
+    )
+
+    from app.schemas.quest import QuestCreateRequest
+    req = QuestCreateRequest(
+        user_id=test_user.id,
+        available_minutes=30,
+        explorer_type="nature",
+        difficulty="medium",
+        latitude=37.7694,
+        longitude=-122.4862,
+    )
+
+    result = await provider.generate_quest(req)
+    assert result.destination_name == "Golden Gate Park"
+    assert result.title == "Park Secret"
+    assert call_count == 2
+
