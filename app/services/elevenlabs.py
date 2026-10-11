@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from collections import OrderedDict
@@ -66,7 +67,8 @@ class ElevenLabsService:
     Guarantees:
     1. Keeps ELEVENLABS_API_KEY strictly server-side.
     2. Caches audio to save credits.
-    3. Handles timeouts, network errors, and quota limits gracefully.
+    3. Coalesces simultaneous identical cache misses to prevent duplicate paid TTS calls.
+    4. Handles timeouts, network errors, and quota limits gracefully.
     """
 
     def __init__(
@@ -83,6 +85,8 @@ class ElevenLabsService:
         self.timeout_seconds = timeout_seconds or settings.elevenlabs_timeout_seconds
         self.cache = cache or narration_cache
         self.base_url = "https://api.elevenlabs.io/v1"
+        self._inflight: dict[str, asyncio.Future[bytes]] = {}
+        self._inflight_lock = asyncio.Lock()
 
     def is_configured(self) -> bool:
         return bool(settings.elevenlabs_enabled and self.api_key)
@@ -111,7 +115,7 @@ class ElevenLabsService:
         selected_voice = (voice_id or self.default_voice_id).strip()
         selected_model = (model_id or self.default_model_id).strip()
 
-        # Check cache
+        # 1. Check cache first
         cache_key = self.cache.build_cache_key(
             voice_id=selected_voice,
             model_id=selected_model,
@@ -122,6 +126,26 @@ class ElevenLabsService:
         if cached_audio:
             logger.info("Serving narration from cache for key %s", cache_key[:12])
             return cached_audio
+
+        # 2. Coalesce concurrent identical requests to prevent thundering herd / double credit spend
+        async with self._inflight_lock:
+            # Double check cache within lock
+            cached_audio = self.cache.get(cache_key)
+            if cached_audio:
+                return cached_audio
+
+            if cache_key in self._inflight:
+                future = self._inflight[cache_key]
+                is_initiator = False
+            else:
+                loop = asyncio.get_running_loop()
+                future = loop.create_future()
+                self._inflight[cache_key] = future
+                is_initiator = True
+
+        if not is_initiator:
+            logger.info("Coalescing simultaneous identical narration request for key %s", cache_key[:12])
+            return await future
 
         endpoint = f"{self.base_url}/text-to-speech/{selected_voice}"
         headers = {
@@ -138,6 +162,31 @@ class ElevenLabsService:
             },
         }
 
+        try:
+            audio_bytes = await self._do_fetch_speech(endpoint, headers, payload, selected_voice)
+            self.cache.put(cache_key, audio_bytes)
+            if not future.done():
+                future.set_result(audio_bytes)
+            return audio_bytes
+        except Exception as exc:
+            if not future.done():
+                future.set_exception(exc)
+            # Mark exception retrieved so unawaited initiator futures do not emit GC warnings
+            _ = future.exception()
+            raise
+
+        finally:
+            async with self._inflight_lock:
+                _ = self._inflight.pop(cache_key, None)
+
+
+    async def _do_fetch_speech(
+        self,
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        selected_voice: str,
+    ) -> bytes:
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 resp = await client.post(endpoint, json=payload, headers=headers)
@@ -169,10 +218,8 @@ class ElevenLabsService:
                 if not audio_bytes:
                     raise ElevenLabsError("ElevenLabs returned empty audio data.", status_code=502)
 
-                # Store in cache
-                self.cache.put(cache_key, audio_bytes)
                 logger.info(
-                    "Generated and cached ElevenLabs audio (%d bytes) for voice %s",
+                    "Generated ElevenLabs audio (%d bytes) for voice %s",
                     len(audio_bytes),
                     selected_voice,
                 )
@@ -190,6 +237,7 @@ class ElevenLabsService:
                 f"Failed to communicate with ElevenLabs: {exc}",
                 status_code=502,
             ) from exc
+
 
 
 elevenlabs_service = ElevenLabsService()
