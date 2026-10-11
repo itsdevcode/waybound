@@ -140,7 +140,7 @@ export function QuestHistoryCard({
                   ) : quest.status === "active" ? (
                     <p className="text-[11px] text-purple-300 flex items-center gap-1">
                       <Lock className="h-3 w-3 text-amber-400/80" />
-                      <span>Target site hidden until completion</span>
+                      <span>Unlock the location by solving clues</span>
                     </p>
                   ) : null}
                 </div>

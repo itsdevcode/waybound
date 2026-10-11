@@ -280,7 +280,7 @@ async def test_verification_failures(client: AsyncClient, test_user: User):
 
 # 9. Successful Quest Completion, XP awarded, destination revealed
 @pytest.mark.asyncio
-async def test_successful_quest_completion(client: AsyncClient, test_user: User):
+async def test_successful_quest_completion(client: AsyncClient, test_user: User, db_session):
     gen_res = await client.post(
         "/api/v1/quests/generate",
         json={
@@ -292,6 +292,14 @@ async def test_successful_quest_completion(client: AsyncClient, test_user: User)
     )
     quest_id = gen_res.json()["id"]
     reward_xp = gen_res.json()["reward_xp"]
+
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    stored_quest.destination_name = "Central Library Courtyard"
+    await db_session.commit()
+
     await client.post(f"/api/v1/quests/{quest_id}/start")
 
     # Target destination for this deterministic configuration is Library Courtyard
@@ -337,7 +345,7 @@ async def test_successful_quest_completion(client: AsyncClient, test_user: User)
 
 # 12. Profile level progression with multiple quests
 @pytest.mark.asyncio
-async def test_profile_level_progression(client: AsyncClient, test_user: User):
+async def test_profile_level_progression(client: AsyncClient, test_user: User, db_session):
     # Complete hard 60 min quest to gain significant XP (350 + 200 = 550 XP -> Level 2)
     gen_res = await client.post(
         "/api/v1/quests/generate",
@@ -350,6 +358,14 @@ async def test_profile_level_progression(client: AsyncClient, test_user: User):
     )
     quest = gen_res.json()
     quest_id = quest["id"]
+
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    stored_quest.destination_name = stored_quest.destination_name.replace("[Simulated Demo] ", "")
+    await db_session.commit()
+
     await client.post(f"/api/v1/quests/{quest_id}/start")
 
     # Check which destination was picked by checking quest title
@@ -412,7 +428,7 @@ async def test_missing_quest_and_user_404(client: AsyncClient):
 
 # 15. Concurrent verification attempts (XP awarded exactly once)
 @pytest.mark.asyncio
-async def test_concurrent_verification_attempts(client: AsyncClient, test_user: User):
+async def test_concurrent_verification_attempts(client: AsyncClient, test_user: User, db_session):
     gen_res = await client.post(
         "/api/v1/quests/generate",
         json={
@@ -423,6 +439,14 @@ async def test_concurrent_verification_attempts(client: AsyncClient, test_user: 
         },
     )
     quest_id = gen_res.json()["id"]
+
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    stored_quest.destination_name = "Central Library Courtyard"
+    await db_session.commit()
+
     await client.post(f"/api/v1/quests/{quest_id}/start")
 
     # Fire two concurrent verification requests

@@ -142,6 +142,7 @@ class Settings(BaseSettings):
                     "Production configuration error: EMAIL_PROVIDER cannot be 'simulated' in production. Configure 'resend', 'smtp', or 'gmail_api' with valid credentials."
                 )
 
+
             if self.email_provider.lower().strip() == "resend" and not self.resend_api_key:
                 raise ValueError(
                     "Production configuration error: RESEND_API_KEY must be provided when EMAIL_PROVIDER is 'resend'."

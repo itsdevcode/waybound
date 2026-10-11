@@ -145,10 +145,10 @@ export function ActiveQuestView({
               {quest.estimated_minutes} Minutes
             </span>
             <span>•</span>
-            <span className="text-purple-300">
+            <span className="text-purple-300 font-semibold">
               {isDemo
-                ? `${quest.reward_xp} XP Available (Simulated Demo)`
-                : "Real-World Quest (0 XP - Provisional Ground Truth)"}
+                ? `${quest.reward_xp} Reward XP (Demo Mode)`
+                : `${quest.reward_xp} Reward XP`}
             </span>
           </div>
 
@@ -162,7 +162,7 @@ export function ActiveQuestView({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-purple-400 uppercase">
               <Scroll className="h-3.5 w-3.5 text-amber-400" />
-              Field Transmission
+              Your Mission
             </div>
             <NarrationControls
               trackId="quest-story"
@@ -188,7 +188,7 @@ export function ActiveQuestView({
           </p>
         </div>
 
-        {/* Target Site Card (Secrecy strictly enforced! Hidden destination data is never narrated) */}
+        {/* Mystery Location Card (Secrecy strictly enforced!) */}
         <div className="rounded-2xl border border-purple-800/40 bg-purple-950/20 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-900/40 border border-purple-600/30 text-amber-400">
@@ -199,13 +199,13 @@ export function ActiveQuestView({
               )}
             </div>
             <div>
-              <p className="text-[11px] text-purple-300/70 font-medium">Destination Secret</p>
+              <p className="text-[11px] text-purple-300/70 font-medium">Mystery Location</p>
               <p className="text-xs font-bold text-white">
                 {isCompleted && quest.destination_name ? (
                   <span className="text-emerald-300">{quest.destination_name}</span>
                 ) : (
                   <span className="text-purple-300/80">
-                    Target Site Sealed (Hidden until arrival)
+                    Unlock the location by solving clues
                   </span>
                 )}
               </p>
@@ -222,19 +222,19 @@ export function ActiveQuestView({
         </div>
       )}
 
-      {/* Clues & Investigation Log */}
+      {/* Hints & Investigation Log */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-amber-400" />
-            Progressive Clues ({quest.current_clues.length} Unlocked)
+            Hints ({quest.current_clues.length} Unlocked)
           </h2>
 
           {isActive && (
             <button
               onClick={handleUnlockHint}
               disabled={unlockingHint}
-              className="text-xs text-amber-300 hover:text-amber-200 font-semibold flex items-center gap-1 transition disabled:opacity-50"
+              className="text-xs text-amber-300 hover:text-amber-200 font-semibold flex items-center gap-1 transition disabled:opacity-50 cursor-pointer"
             >
               {unlockingHint ? (
                 <>
@@ -244,7 +244,7 @@ export function ActiveQuestView({
               ) : (
                 <>
                   <Unlock className="h-3 w-3" />
-                  <span>Unlock Next Clue</span>
+                  <span>Unlock Next Hint</span>
                 </>
               )}
             </button>
@@ -255,10 +255,10 @@ export function ActiveQuestView({
           <div className="card-runic rounded-2xl p-6 text-center space-y-2">
             <Lock className="h-8 w-8 text-purple-400 mx-auto" />
             <p className="text-xs font-semibold text-purple-200">
-              All clues remain locked in the draft scroll.
+              All hints remain locked.
             </p>
             <p className="text-[11px] text-purple-300/60">
-              Start this quest to reveal your initial exploration clue.
+              Start this adventure to reveal your first hint.
             </p>
           </div>
         ) : (
@@ -271,12 +271,12 @@ export function ActiveQuestView({
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-bold text-amber-400 flex items-center gap-1.5">
                     <Sparkles className="h-3 w-3" />
-                    Clue #{clue.step_order}
+                    Hint #{clue.step_order}
                   </span>
                   <div className="flex items-center gap-2">
                     <NarrationControls
                       trackId={`clue-${clue.id}`}
-                      textToNarrate={`Clue number ${clue.step_order}. ${clue.clue}`}
+                      textToNarrate={`Hint number ${clue.step_order}. ${clue.clue}`}
                       activeTrackId={narration.activeTrackId}
                       isPlaying={narration.isPlaying}
                       isPaused={narration.isPaused}
@@ -349,12 +349,12 @@ export function ActiveQuestView({
               {starting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
-                  <span>Unsealing Quest...</span>
+                  <span>Starting Adventure...</span>
                 </>
               ) : (
                 <>
                   <Compass className="h-4 w-4 text-amber-300" />
-                  <span>Embark on Quest (Unlock Clue #1)</span>
+                  <span>Start Adventure (Unlock Hint #1)</span>
                 </>
               )}
             </button>

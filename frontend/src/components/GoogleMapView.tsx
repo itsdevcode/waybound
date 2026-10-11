@@ -3,6 +3,14 @@
 import React, { useEffect, useRef } from "react";
 import type { NearbyQuestItem } from "@/types/api";
 
+export interface CalculatedRouteInfo {
+  distanceText: string;
+  durationText: string;
+  durationMinutes: number;
+  isMystery?: boolean;
+  steps?: Array<{ instructions: string; distanceText: string }>;
+}
+
 interface GoogleMapViewProps {
   center: { latitude: number; longitude: number };
   userLocation: { latitude: number; longitude: number; accuracy: number } | null;
@@ -11,7 +19,7 @@ interface GoogleMapViewProps {
   selectedQuest: NearbyQuestItem | null;
   onSelectQuest: (quest: NearbyQuestItem) => void;
   activeQuestGeofenceMeters?: number;
-  onRouteCalculated?: (routeInfo: { distanceText: string; durationText: string; durationMinutes: number } | null) => void;
+  onRouteCalculated?: (routeInfo: CalculatedRouteInfo | null) => void;
 }
 
 export function GoogleMapView({
@@ -124,7 +132,7 @@ export function GoogleMapView({
     };
   }, [center.latitude, center.longitude, radiusMeters]);
 
-  // Update User Location Marker (Blue pulsing dot)
+  // Update User Location Marker (Live visible marker)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps || !userLocation) {
       if (userMarkerRef.current) {
@@ -139,7 +147,7 @@ export function GoogleMapView({
       userMarkerRef.current = new window.google.maps.Marker({
         position,
         map: mapInstanceRef.current,
-        title: "Your Location",
+        title: "Your Live Explorer Location",
         icon: {
           path: window.google.maps.SymbolPath.CIRCLE,
           scale: 9,
@@ -155,7 +163,7 @@ export function GoogleMapView({
     }
   }, [userLocation]);
 
-  // Update Quest Markers
+  // Update Quest Markers (Secret destination privacy strictly enforced)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps) return;
 
@@ -164,6 +172,11 @@ export function GoogleMapView({
     questMarkersRef.current = [];
 
     quests.forEach((quest) => {
+      // CRITICAL PRIVACY: Never plot a secret destination marker before reveal!
+      if (quest.is_destination_secret && quest.status !== "completed") {
+        return;
+      }
+
       const isSelected = selectedQuest?.title === quest.title;
       // Waybound Purple and Gold game color palette
       let fillColor = "#9333ea"; // Purple for available
@@ -172,8 +185,8 @@ export function GoogleMapView({
         fillColor = "#f59e0b"; // Glowing Amber/Gold for active quest
         strokeColor = "#ffffff";
       } else if (quest.status === "completed") {
-        fillColor = "#3b82f6"; // Sapphire/Blue for completed
-        strokeColor = "#93c5fd";
+        fillColor = "#10b981"; // Emerald for completed
+        strokeColor = "#6ee7b7";
       } else if (quest.status === "locked") {
         fillColor = "#475569"; // Slate for locked
         strokeColor = "#94a3b8";
@@ -211,7 +224,7 @@ export function GoogleMapView({
     };
   }, [quests, selectedQuest, onSelectQuest]);
 
-  // Active Quest Geofence Circle (100m Authoritative Verification Zone)
+  // Active Quest Geofence Circle (Authoritative Verification Zone for revealed or active quest)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps) return;
 
@@ -221,7 +234,7 @@ export function GoogleMapView({
     }
 
     const activeOrSelected = quests.find((q) => q.status === "active") || selectedQuest;
-    if (activeOrSelected) {
+    if (activeOrSelected && (!activeOrSelected.is_destination_secret || activeOrSelected.status === "completed")) {
       geofenceCircleRef.current = new window.google.maps.Circle({
         map: mapInstanceRef.current,
         center: { lat: activeOrSelected.latitude, lng: activeOrSelected.longitude },
@@ -241,7 +254,7 @@ export function GoogleMapView({
     };
   }, [quests, selectedQuest, activeQuestGeofenceMeters]);
 
-  // Walking Route Line / Directions
+  // Walking Route Line / Directions following real streets and pedestrian paths
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps) return;
 
@@ -251,15 +264,25 @@ export function GoogleMapView({
         suppressMarkers: true,
         polylineOptions: {
           strokeColor: "#a855f7",
-          strokeOpacity: 0.8,
-          strokeWeight: 4,
+          strokeOpacity: 0.85,
+          strokeWeight: 5,
         },
       });
     }
 
-    if (!userLocation || !selectedQuest) {
+    // CRITICAL: If no user location, no selection, or if destination is still secret, do NOT route to destination
+    if (!userLocation || !selectedQuest || selectedQuest.is_destination_secret) {
       directionsRendererRef.current.setDirections({ routes: [] });
-      onRouteCalculated?.(null);
+      if (selectedQuest?.is_destination_secret) {
+        onRouteCalculated?.({
+          distanceText: "Exploration Zone Active",
+          durationText: "Follow hints to uncover location",
+          durationMinutes: selectedQuest.estimated_minutes,
+          isMystery: true,
+        });
+      } else {
+        onRouteCalculated?.(null);
+      }
       return;
     }
 
@@ -276,15 +299,27 @@ export function GoogleMapView({
           const firstLeg = result.routes[0].legs[0];
           if (firstLeg && firstLeg.distance && firstLeg.duration) {
             const minutes = Math.max(1, Math.round(firstLeg.duration.value / 60));
+            const legWithSteps = firstLeg as unknown as {
+              steps?: Array<{ instructions?: string; distance?: { text?: string } }>;
+            };
+            const rawSteps = legWithSteps.steps || [];
+            const steps = rawSteps.map((s) => ({
+              instructions: s.instructions ? s.instructions.replace(/<[^>]+>/g, " ") : "",
+              distanceText: s.distance?.text || "",
+            }));
+
             onRouteCalculated?.({
               distanceText: firstLeg.distance.text,
               durationText: firstLeg.duration.text,
               durationMinutes: minutes,
+              isMystery: false,
+              steps,
             });
           } else {
             onRouteCalculated?.(null);
           }
         } else {
+          // Route failure: clear polyline gracefully without inventing fake routes
           directionsRendererRef.current?.setDirections({ routes: [] });
           onRouteCalculated?.(null);
         }

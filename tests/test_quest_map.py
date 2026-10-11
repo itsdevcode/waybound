@@ -171,8 +171,8 @@ async def test_nearby_quests_google_places_discovery(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_nearby_quests_provider_failure_falls_back_to_demo(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
-    """When Google Places provider raises an error or fails, fallback safely to demo destinations labeled as simulated."""
+async def test_nearby_quests_provider_failure_never_returns_simulated_catalog(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
+    """When Google Places provider raises an error or fails, it must never return simulated catalog or demo destinations."""
     from app.core.config import settings
     from app.services.places import GooglePlacesService
 
@@ -192,12 +192,9 @@ async def test_nearby_quests_provider_failure_falls_back_to_demo(monkeypatch: py
     assert res.status_code == 200
     data = res.json()
 
-    # Must fall back gracefully to demo destinations and explicitly label them simulated
-    assert data["total_count"] > 0
-    first = data["items"][0]
-    assert first["is_simulated"] is True
-    assert "[Demo Scenario]" in first["title"]
-    assert "0 XP" in first["description"]
+    # Must return empty items, NEVER simulated catalog items
+    assert data["total_count"] == 0
+    assert len(data["items"]) == 0
 
 
 @pytest.mark.asyncio
@@ -268,6 +265,333 @@ async def test_nearby_cities_endpoint_provider_failure_returns_empty_list(monkey
     res = await client.get("/api/v1/quests/nearby-cities?latitude=37.7749&longitude=-122.4194")
     assert res.status_code == 200
     assert res.json() == []
+
+
+@pytest.mark.asyncio
+async def test_nearby_quests_destination_secrecy_for_active_and_completed_quests(
+    client: AsyncClient, db_session
+):
+    """Ensure secret destination coordinates are never exposed in nearby payload until completion."""
+    import uuid
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"secrecy_tester_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "Secrecy Tester", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    query_lat = 37.7749
+    query_lon = -122.4194
+
+    # 1. Generate & start quest
+    create_res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 30,
+            "explorer_type": "mystery",
+            "difficulty": "medium",
+            "latitude": query_lat,
+            "longitude": query_lon,
+        },
+        headers={**auth_headers},
+    )
+    assert create_res.status_code == 201
+    quest_data = create_res.json()
+    quest_id = quest_data["id"]
+
+    start_res = await client.post(f"/api/v1/quests/{quest_id}/start", headers=auth_headers)
+    assert start_res.status_code == 200
+
+    # 2. Query nearby when ACTIVE -> Destination coordinates must NOT leak!
+    nearby_res = await client.get(
+        f"/api/v1/quests/nearby?latitude={query_lat}&longitude={query_lon}&radius_meters=10000",
+        headers=auth_headers,
+    )
+    assert nearby_res.status_code == 200
+    nearby_data = nearby_res.json()
+
+    active_items = [it for it in nearby_data["items"] if it["id"] == quest_id]
+    assert len(active_items) == 1
+    active_item = active_items[0]
+
+    assert active_item["status"] == "active"
+    assert active_item["is_destination_secret"] is True
+    # Latitude and longitude must be masked to exploration center, NOT the secret destination
+    assert active_item["latitude"] == query_lat
+    assert active_item["longitude"] == query_lon
+    assert active_item["distance_meters"] == 0.0
+
+    # 3. Retrieve actual destination from DB to verify arrival
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    real_dest_lat = float(stored_quest.destination_latitude)
+    real_dest_lon = float(stored_quest.destination_longitude)
+    real_answer = stored_quest.verification_answer
+
+    # Complete the quest via verified arrival
+    verify_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": real_dest_lat,
+            "longitude": real_dest_lon,
+            "observation_answer": real_answer,
+        },
+        headers=auth_headers,
+    )
+    assert verify_res.status_code == 200
+    assert verify_res.json()["quest"]["status"] == "completed"
+
+    # 4. Query nearby when COMPLETED -> Secret is legitimately revealed
+    nearby_after = await client.get(
+        f"/api/v1/quests/nearby?latitude={query_lat}&longitude={query_lon}&radius_meters=10000",
+        headers=auth_headers,
+    )
+    assert nearby_after.status_code == 200
+    completed_items = [it for it in nearby_after.json()["items"] if it["id"] == quest_id]
+    assert len(completed_items) == 1
+    completed_item = completed_items[0]
+
+    assert completed_item["status"] == "completed"
+    assert completed_item["is_destination_secret"] is False
+    assert completed_item["latitude"] == real_dest_lat
+    assert completed_item["longitude"] == real_dest_lon
+
+
+@pytest.mark.asyncio
+async def test_gps_arrival_verification_and_single_xp_award(
+    client: AsyncClient, db_session
+):
+    """Ensure GPS proximity verification protects rewards and only awards XP once."""
+    import uuid
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"gps_verifier_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "GPS Verifier", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    create_res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 15,
+            "explorer_type": "discovery",
+            "difficulty": "easy",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    quest_id = create_res.json()["id"]
+
+    # Start quest
+    await client.post(f"/api/v1/quests/{quest_id}/start", headers=auth_headers)
+
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    # Designate as genuine real-world landmark quest
+    stored_quest.destination_name = "Palace of Fine Arts"
+    await db_session.commit()
+
+    real_lat = float(stored_quest.destination_latitude)
+    real_lon = float(stored_quest.destination_longitude)
+    answer = stored_quest.verification_answer
+
+    # A) Attempt verification far away (>100m) -> 400 error
+    far_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": real_lat + 0.05,
+            "longitude": real_lon + 0.05,
+            "observation_answer": answer,
+        },
+        headers=auth_headers,
+    )
+    assert far_res.status_code == 400
+    assert "not within the target destination area" in far_res.json()["detail"]
+
+    # B) Legitimate arrival within geofence with correct answer -> Success & XP legitimately awarded
+    success_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": real_lat,
+            "longitude": real_lon,
+            "observation_answer": answer,
+            "is_manual_location": False,
+        },
+        headers=auth_headers,
+    )
+    assert success_res.status_code == 200
+    data = success_res.json()
+    assert data["success"] is True
+    assert data["quest"]["status"] == "completed"
+    first_awarded_xp = data["reward_xp_awarded"]
+    assert first_awarded_xp == stored_quest.reward_xp
+    assert data["total_xp"] == first_awarded_xp
+    assert "earned" in data["message"]
+
+    # C) Attempt duplicate verification on already completed quest -> 409 conflict, no extra XP
+    duplicate_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": real_lat,
+            "longitude": real_lon,
+            "observation_answer": answer,
+        },
+        headers=auth_headers,
+    )
+    assert duplicate_res.status_code == 409
+    assert "already completed" in duplicate_res.json()["detail"]
+
+    # D) Verification with manual location override on a new quest -> Completes with 0 XP awarded
+    create_manual = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 15,
+            "explorer_type": "discovery",
+            "difficulty": "easy",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    manual_qid = create_manual.json()["id"]
+    await client.post(f"/api/v1/quests/{manual_qid}/start", headers=auth_headers)
+    manual_q = await quest_repo.get_by_id(uuid.UUID(manual_qid))
+    assert manual_q is not None
+    manual_q.destination_name = "Palace of Fine Arts"
+    await db_session.commit()
+
+    manual_res = await client.post(
+        f"/api/v1/quests/{manual_qid}/verify",
+        json={
+            "latitude": float(manual_q.destination_latitude),
+            "longitude": float(manual_q.destination_longitude),
+            "observation_answer": manual_q.verification_answer,
+            "is_manual_location": True,
+        },
+        headers=auth_headers,
+    )
+    assert manual_res.status_code == 200
+    manual_data = manual_res.json()
+    assert manual_data["success"] is True
+    assert manual_data["reward_xp_awarded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_simulated_quest_completion_awards_zero_public_xp(
+    client: AsyncClient, db_session
+):
+    """Ensure simulated demo quests complete without awarding public progression XP."""
+    import uuid
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"sim_tester_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "Sim Tester", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    create_res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 15,
+            "explorer_type": "mystery",
+            "difficulty": "easy",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    quest_id = create_res.json()["id"]
+
+    await client.post(f"/api/v1/quests/{quest_id}/start", headers=auth_headers)
+
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    # Explicit simulated demo destination tag
+    stored_quest.destination_name = "[Simulated Demo] Central Library Courtyard"
+    await db_session.commit()
+
+    real_lat = float(stored_quest.destination_latitude)
+    real_lon = float(stored_quest.destination_longitude)
+    answer = stored_quest.verification_answer
+
+    verify_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": real_lat,
+            "longitude": real_lon,
+            "observation_answer": answer,
+        },
+        headers=auth_headers,
+    )
+    assert verify_res.status_code == 200
+    v_data = verify_res.json()
+    assert v_data["success"] is True
+    assert v_data["quest"]["status"] == "completed"
+    # Simulated quests must NOT award public progression XP
+    assert v_data["reward_xp_awarded"] == 0
+    assert v_data["total_xp"] == 0
+    assert "No public XP awarded" in v_data["message"]
+
+
+@pytest.mark.asyncio
+async def test_quest_generation_places_failure_never_returns_simulated_quest(
+    monkeypatch: pytest.MonkeyPatch, client: AsyncClient, db_session
+):
+    """Prove that Google Places failure during quest generation returns an explicit error and never a simulated quest."""
+    import uuid
+    from app.core.config import settings
+    from app.services.places import GooglePlacesService
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"real_tester_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "Real Tester", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    monkeypatch.setattr(settings, "quest_provider", "google_places_gemma")
+    monkeypatch.setattr(settings, "google_maps_api_key", "test_maps_key")
+    monkeypatch.setattr(settings, "gemma_api_key", "test_gemma_key")
+
+    # Mock search_nearby_places returning empty list (0 places discovered)
+    async def mock_empty_places(self, *args, **kwargs):
+        return []
+
+    monkeypatch.setattr(GooglePlacesService, "search_nearby_places", mock_empty_places)
+
+    res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 30,
+            "explorer_type": "discovery",
+            "difficulty": "medium",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    # Must fail with an explicit 404 error, NEVER generate a simulated demo quest
+    assert res.status_code == 404
+    err_detail = res.json()["detail"]
+    assert "No suitable public exploration locations found nearby" in err_detail
+    assert "Simulated" not in err_detail
+
+
+def test_demo_quest_provider_forbidden_in_production(monkeypatch: pytest.MonkeyPatch):
+    """Prove that 'demo' quest provider mode is strictly forbidden in production."""
+    from app.core.config import settings
+    from app.services.providers.factory import create_quest_provider
+
+    monkeypatch.setattr(settings, "environment", "production")
+    with pytest.raises(ValueError, match="forbidden in production"):
+        create_quest_provider(mode="demo")
 
 
 
