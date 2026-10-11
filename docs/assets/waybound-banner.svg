@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0518" />
+      <stop offset="45%" stop-color="#190d36" />
+      <stop offset="85%" stop-color="#0d0722" />
+      <stop offset="100%" stop-color="#05020c" />
+    </linearGradient>
+
+    <!-- Glowing Purple/Amber Gradients -->
+    <linearGradient id="text-gold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="50%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+
+    <linearGradient id="accent-purple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc" />
+      <stop offset="50%" stop-color="#9333ea" />
+      <stop offset="100%" stop-color="#6b21a8" />
+    </linearGradient>
+
+    <linearGradient id="radar-beam" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0" />
+    </linearGradient>
+
+    <!-- Filters for Glow Effects -->
+    <filter id="glow-gold" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <filter id="glow-purple" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Pattern for Map Grid -->
+    <pattern id="map-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#581c87" stroke-width="0.75" stroke-opacity="0.35" />
+    </pattern>
+  </defs>
+
+  <style>
+    .title-font { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-weight: 900; letter-spacing: 0.22em; }
+    .tagline-font { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-weight: 700; letter-spacing: 0.08em; }
+    .body-font { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-weight: 400; }
+    .mono-font { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+
+  <!-- Canvas Background -->
+  <rect width="1200" height="420" fill="url(#bg-grad)" />
+
+  <!-- Tactical Map Grid -->
+  <rect width="1200" height="420" fill="url(#map-grid)" />
+
+  <!-- Abstract Exploration Topography / Contour Paths -->
+  <g opacity="0.45" stroke="#7e22ce" stroke-width="1.2" fill="none">
+    <path d="M -50 160 Q 200 80, 450 200 T 950 140 T 1250 220" />
+    <path d="M -50 220 Q 250 120, 550 260 T 1000 190 T 1250 300" stroke="#9333ea" stroke-width="1" />
+    <path d="M -50 290 Q 300 210, 600 330 T 1050 240 T 1250 360" stroke="#6b21a8" stroke-width="0.8" />
+  </g>
+
+  <!-- Left Side: Radar Scanner Aesthetic -->
+  <g transform="translate(180, 210)">
+    <!-- Radar Rings -->
+    <circle r="140" fill="none" stroke="#7e22ce" stroke-width="1.2" stroke-opacity="0.4" stroke-dasharray="4,6" />
+    <circle r="100" fill="none" stroke="#9333ea" stroke-width="1.4" stroke-opacity="0.5" />
+    <circle r="60" fill="none" stroke="#c084fc" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="2,4" />
+    <circle r="20" fill="#2e1065" stroke="#fbbf24" stroke-width="2" />
+
+    <!-- Radar Crosshairs -->
+    <line x1="-150" y1="0" x2="150" y2="0" stroke="#7e22ce" stroke-width="0.8" stroke-opacity="0.5" />
+    <line x1="0" y1="-150" x2="0" y2="150" stroke="#7e22ce" stroke-width="0.8" stroke-opacity="0.5" />
+
+    <!-- Radar Sweep Cone -->
+    <path d="M 0 0 L 98 -70 A 120 120 0 0 0 35 -115 Z" fill="url(#radar-beam)" />
+
+    <!-- User Live GPS Position -->
+    <circle cx="0" cy="0" r="8" fill="#3b82f6" filter="url(#glow-purple)" />
+    <circle cx="0" cy="0" r="3.5" fill="#ffffff" />
+    <circle cx="0" cy="0" r="22" fill="#3b82f6" fill-opacity="0.18" stroke="#60a5fa" stroke-width="1.5" />
+
+    <!-- Walking Exploration Waypoint Polyline -->
+    <path d="M 0 0 Q 35 45, 65 30 T 110 -20" fill="none" stroke="#fbbf24" stroke-width="3" stroke-dasharray="6,4" filter="url(#glow-gold)" />
+
+    <!-- Intermediate Waypoint Marker #1 -->
+    <g transform="translate(65, 30)">
+      <circle r="14" fill="#581c87" stroke="#fbbf24" stroke-width="2" />
+      <text x="0" y="5" font-size="12" font-weight="900" fill="#fbbf24" text-anchor="middle" class="title-font">?</text>
+    </g>
+
+    <!-- Intermediate Waypoint Marker #2 -->
+    <g transform="translate(110, -20)">
+      <circle r="12" fill="#4c1d95" stroke="#f59e0b" stroke-width="2" />
+      <text x="0" y="4" font-size="11" font-weight="900" fill="#f59e0b" text-anchor="middle" class="title-font">?</text>
+    </g>
+
+    <!-- Translucent Mystery Search Zone -->
+    <circle cx="160" cy="-60" r="45" fill="#9333ea" fill-opacity="0.22" stroke="#c084fc" stroke-width="1.8" stroke-dasharray="5,4" filter="url(#glow-purple)" />
+    <text x="160" y="-56" font-size="11" font-weight="bold" fill="#e9d5ff" text-anchor="middle" class="mono-font" opacity="0.85">MYSTERY ZONE</text>
+  </g>
+
+  <!-- Right/Center Content: Brand & Taglines -->
+  <g transform="translate(520, 0)">
+    <!-- Small Category Pill -->
+    <g transform="translate(0, 75)">
+      <rect x="0" y="0" width="280" height="28" rx="14" fill="#3b0764" stroke="#a855f7" stroke-width="1.2" />
+      <circle cx="14" cy="14" r="5" fill="#fbbf24" filter="url(#glow-gold)" />
+      <text x="28" y="18" fill="#e9d5ff" font-size="11" font-weight="700" letter-spacing="0.1em" class="tagline-font">
+        REAL-WORLD AI ADVENTURE PLATFORM
+      </text>
+    </g>
+
+    <!-- Main Project Logo / Wordmark -->
+    <text x="0" y="165" fill="url(#text-gold)" font-size="64" class="title-font" filter="url(#glow-gold)">
+      WAYBOUND
+    </text>
+
+    <!-- Primary Tagline -->
+    <text x="2" y="215" fill="#ffffff" font-size="24" class="tagline-font">
+      Turn Real Places Into Real Adventures.
+    </text>
+
+    <!-- Subtitle Description -->
+    <text x="2" y="250" fill="#c084fc" font-size="15" class="body-font">
+      AI Game Master · Google Places Discovery · Mystery Search Zones
+    </text>
+    <text x="2" y="274" fill="#a855f7" font-size="15" class="body-font">
+      Walking Route Polyline · GPS Arrival Proof · Cooperative Fellowship
+    </text>
+
+    <!-- Feature Pillars Badges -->
+    <g transform="translate(0, 310)">
+      <!-- Badge 1: Real World -->
+      <g transform="translate(0, 0)">
+        <rect x="0" y="0" width="140" height="34" rx="8" fill="#1e1035" stroke="#7e22ce" stroke-width="1.2" />
+        <text x="70" y="21" fill="#fef08a" font-size="12" font-weight="600" text-anchor="middle" class="tagline-font">📍 REAL PLACES</text>
+      </g>
+
+      <!-- Badge 2: AI Narrator -->
+      <g transform="translate(152, 0)">
+        <rect x="0" y="0" width="140" height="34" rx="8" fill="#1e1035" stroke="#7e22ce" stroke-width="1.2" />
+        <text x="70" y="21" fill="#c084fc" font-size="12" font-weight="600" text-anchor="middle" class="tagline-font">🤖 GEMMA 2 &amp; TTS</text>
+      </g>
+
+      <!-- Badge 3: Google Maps -->
+      <g transform="translate(304, 0)">
+        <rect x="0" y="0" width="140" height="34" rx="8" fill="#1e1035" stroke="#7e22ce" stroke-width="1.2" />
+        <text x="70" y="21" fill="#60a5fa" font-size="12" font-weight="600" text-anchor="middle" class="tagline-font">🗺️ GOOGLE MAPS</text>
+      </g>
+
+      <!-- Badge 4: Multiplayer -->
+      <g transform="translate(456, 0)">
+        <rect x="0" y="0" width="140" height="34" rx="8" fill="#1e1035" stroke="#7e22ce" stroke-width="1.2" />
+        <text x="70" y="21" fill="#34d399" font-size="12" font-weight="600" text-anchor="middle" class="tagline-font">⚔️ FELLOWSHIP</text>
+      </g>
+    </g>
+
+    <!-- Live Status Indicator -->
+    <g transform="translate(2, 375)">
+      <circle cx="6" cy="6" r="4" fill="#10b981" />
+      <circle cx="6" cy="6" r="8" fill="#10b981" fill-opacity="0.25" />
+      <text x="22" y="10" fill="#9ca3af" font-size="12" class="mono-font">LIVE AT WAYBOUND-FRONTEND.ONRENDER.COM</text>
+    </g>
+  </g>
+
+  <!-- Glowing Border Accent -->
+  <rect x="1" y="1" width="1198" height="418" rx="6" fill="none" stroke="#7e22ce" stroke-width="1.5" stroke-opacity="0.5" />
+</svg>
