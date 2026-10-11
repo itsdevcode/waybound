@@ -9,6 +9,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
+    String,
     Text,
     UniqueConstraint,
     func,
@@ -51,6 +53,22 @@ class QuestStep(Base):
         Boolean,
         default=False,
         nullable=False,
+    )
+    waypoint_place_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    waypoint_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    waypoint_latitude: Mapped[float | None] = mapped_column(
+        Numeric(precision=9, scale=6),
+        nullable=True,
+    )
+    waypoint_longitude: Mapped[float | None] = mapped_column(
+        Numeric(precision=9, scale=6),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

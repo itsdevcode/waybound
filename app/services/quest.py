@@ -65,16 +65,28 @@ class QuestService:
         Converts a Quest model to public QuestResponse.
         CRITICAL SECURITY REQUIREMENT:
         Never expose hidden destination coordinates or destination name before successful completion.
-        Only expose unlocked clues.
+        Only expose unlocked clues and only reveal intermediate waypoint coordinates when that clue is unlocked.
         """
         is_completed = quest.status == "completed"
 
-        # Filter only unlocked steps
-        unlocked_steps = [
-            QuestStepResponse.model_validate(step)
-            for step in quest.steps
-            if step.is_unlocked
-        ]
+        # Filter only unlocked steps and map coordinates
+        unlocked_steps: list[QuestStepResponse] = []
+        for step in quest.steps:
+            if not step.is_unlocked:
+                continue
+            lat = float(step.waypoint_latitude) if step.waypoint_latitude is not None else None
+            lon = float(step.waypoint_longitude) if step.waypoint_longitude is not None else None
+            unlocked_steps.append(
+                QuestStepResponse(
+                    id=step.id,
+                    step_order=step.step_order,
+                    clue=step.clue,
+                    is_unlocked=step.is_unlocked,
+                    latitude=lat,
+                    longitude=lon,
+                    waypoint_name=step.waypoint_name,
+                )
+            )
         unlocked_steps.sort(key=lambda s: s.step_order)
 
         # Verification prompt is shown during active or completed status
@@ -127,12 +139,18 @@ class QuestService:
             verification_answer=generated.verification_answer,
         )
 
-        # Add steps (initially locked; first unlocks on start)
+        # Add steps with validated intermediate waypoints (initially locked; first unlocks on start)
+        waypoints_list = getattr(generated, "waypoints", [])
         for idx, clue_text in enumerate(generated.clues, start=1):
+            wp = waypoints_list[idx - 1] if idx - 1 < len(waypoints_list) else None
             step = QuestStep(
                 step_order=idx,
                 clue=clue_text,
                 is_unlocked=False,
+                waypoint_place_id=wp.place_id if wp else None,
+                waypoint_name=wp.name if wp else None,
+                waypoint_latitude=wp.latitude if wp else None,
+                waypoint_longitude=wp.longitude if wp else None,
             )
             quest.steps.append(step)
 
@@ -209,9 +227,19 @@ class QuestService:
         refreshed = await self.quest_repo.get_by_id(quest_id)
         refreshed_quest = refreshed or quest
 
+        unlocked_step_response = QuestStepResponse(
+            id=next_step.id,
+            step_order=next_step.step_order,
+            clue=next_step.clue,
+            is_unlocked=next_step.is_unlocked,
+            latitude=float(next_step.waypoint_latitude) if next_step.waypoint_latitude is not None else None,
+            longitude=float(next_step.waypoint_longitude) if next_step.waypoint_longitude is not None else None,
+            waypoint_name=next_step.waypoint_name,
+        )
+
         remaining_locked = [s for s in refreshed_quest.steps if not s.is_unlocked]
         return QuestHintResponse(
-            unlocked_step=QuestStepResponse.model_validate(next_step),
+            unlocked_step=unlocked_step_response,
             all_hints_unlocked=len(remaining_locked) == 0,
             quest=self._to_response_schema(refreshed_quest),
         )

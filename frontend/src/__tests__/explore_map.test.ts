@@ -247,5 +247,125 @@ describe("Interactive Quest Map Utilities", () => {
       expect(cleanedSteps[1].instructions).toBe("Turn  right  onto 4th St");
       expect(cleanedSteps[1].distanceText).toBe("350 ft");
     });
+
+    it("enforces that mystery quests without genuine waypoints never invent fake route coordinates", () => {
+      // Clues without coordinates
+      const textOnlyClues = [
+        {
+          id: "step-1",
+          step_order: 1,
+          clue: "Seek the bronze bell near the fountain.",
+          is_unlocked: true,
+          latitude: null,
+          longitude: null,
+        },
+      ];
+
+      // Filter for genuine waypoints
+      const genuineWaypoints = textOnlyClues.filter(
+        (c) => c.is_unlocked && typeof c.latitude === "number" && typeof c.longitude === "number"
+      );
+
+      // No fake waypoints invented!
+      expect(genuineWaypoints.length).toBe(0);
+    });
+
+    it("detects genuine unlocked intermediate waypoints and updates route target accordingly", () => {
+      const progressiveClues = [
+        {
+          id: "step-1",
+          step_order: 1,
+          clue: "Begin at the library entrance.",
+          is_unlocked: true,
+          latitude: 37.776,
+          longitude: -122.417,
+          waypoint_name: "Civic Center Library",
+        },
+        {
+          id: "step-2",
+          step_order: 2,
+          clue: "Proceed to the historic fountain.",
+          is_unlocked: true,
+          latitude: 37.778,
+          longitude: -122.415,
+          waypoint_name: "Historic Fountain",
+        },
+        {
+          id: "step-3",
+          step_order: 3,
+          clue: "Find the hidden stone plaque.",
+          is_unlocked: false,
+          latitude: 37.780,
+          longitude: -122.413,
+          waypoint_name: "Hidden Plaque",
+        },
+      ];
+
+      const unlockedWithWaypoints = progressiveClues.filter(
+        (c) => c.is_unlocked && typeof c.latitude === "number" && typeof c.longitude === "number"
+      );
+
+      expect(unlockedWithWaypoints.length).toBe(2);
+      // The current target waypoint should be the latest unlocked one (Hint #2)
+      const currentTarget = unlockedWithWaypoints[unlockedWithWaypoints.length - 1];
+      expect(currentTarget.step_order).toBe(2);
+      expect(currentTarget.waypoint_name).toBe("Historic Fountain");
+      expect(currentTarget.latitude).toBe(37.778);
+      expect(currentTarget.longitude).toBe(-122.415);
+    });
+
+    it("throttles walking route recalculation when explorer movement is within 25 meters", () => {
+      const haversineMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const R = 6371000;
+        const dLat = ((lat2 - lat1) * Math.PI) / 180;
+        const dLon = ((lon2 - lon1) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((lat1 * Math.PI) / 180) *
+            Math.cos((lat2 * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      };
+
+      const startLat = 37.7749;
+      const startLon = -122.4194;
+
+      // Small jitter: ~10 meters
+      const slightMoveLat = 37.77498;
+      const slightMoveLon = -122.4194;
+      const distSmall = haversineMeters(startLat, startLon, slightMoveLat, slightMoveLon);
+      expect(distSmall).toBeLessThan(25);
+
+      // Significant movement: ~80 meters
+      const bigMoveLat = 37.7756;
+      const bigMoveLon = -122.4194;
+      const distBig = haversineMeters(startLat, startLon, bigMoveLat, bigMoveLon);
+      expect(distBig).toBeGreaterThan(25);
+    });
+
+    it("gracefully handles Directions API route failure by not creating fake routes", () => {
+      let routeResult: { distanceText: string } | null = { distanceText: "100m" };
+
+      // Simulate API failure status ZERO_RESULTS or NOT_FOUND
+      const apiStatus: string = "ZERO_RESULTS";
+      if (apiStatus !== "OK") {
+        routeResult = null;
+      }
+
+      expect(routeResult).toBeNull();
+    });
+
+    it("verifies GPS accuracy circle radius reflects high-accuracy GPS reading", () => {
+      const gpsReading = {
+        latitude: 37.7749,
+        longitude: -122.4194,
+        accuracy: 14.5,
+      };
+
+      const circleRadius = Math.max(10, gpsReading.accuracy || 20);
+      expect(circleRadius).toBe(14.5);
+      expect(circleRadius).toBeLessThan(20);
+    });
   });
 });

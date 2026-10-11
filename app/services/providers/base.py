@@ -1,6 +1,22 @@
 from typing import Protocol, runtime_checkable
 
-from app.schemas.quest import DestinationCandidate, QuestCreateRequest
+from app.schemas.quest import QuestCreateRequest
+
+
+class StepWaypointCandidate:
+    """Represents a validated intermediate waypoint associated with a clue."""
+
+    def __init__(
+        self,
+        place_id: str | None = None,
+        name: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+    ) -> None:
+        self.place_id = place_id
+        self.name = name
+        self.latitude = latitude
+        self.longitude = longitude
 
 
 class QuestGenerationResult:
@@ -17,6 +33,7 @@ class QuestGenerationResult:
         verification_prompt: str,
         verification_answer: str,
         clues: list[str],
+        waypoints: list[StepWaypointCandidate | None] | None = None,
     ) -> None:
         self.title = title
         self.description = description
@@ -29,6 +46,7 @@ class QuestGenerationResult:
         self.verification_prompt = verification_prompt
         self.verification_answer = verification_answer
         self.clues = clues
+        self.waypoints = waypoints or []
 
 
 @runtime_checkable

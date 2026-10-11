@@ -909,6 +909,8 @@ export default function HomePage() {
           onSelectQuest={(item) => setSelectedQuestItem(item)}
           activeQuestGeofenceMeters={selectedQuestItem?.verification_radius_meters ?? 100}
           onRouteCalculated={(info) => setRouteInfo(info)}
+          activeQuestClues={activeQuest?.current_clues ?? []}
+          onRecenterUser={() => void acquireLocation()}
         />
       ) : (
         <RadarMapView
@@ -1082,11 +1084,13 @@ export default function HomePage() {
                 <Navigation className="h-3.5 w-3.5 text-purple-400" />
                 <span>
                   {selectedQuestItem.is_destination_secret
-                    ? "Mystery (follow hints)"
+                    ? (routeInfo && !routeInfo.isMystery && routeInfo.targetType === "waypoint"
+                        ? `Waypoint Walk: ${routeInfo.distanceText} (${routeInfo.durationText})`
+                        : "Mystery (follow hints)")
                     : routeInfo && !routeInfo.isMystery
-                    ? `${routeInfo.durationText} (${routeInfo.distanceText})`
+                    ? `Walking route: ${routeInfo.distanceText} (${routeInfo.durationText})`
                     : selectedQuestItem.distance_meters > 0
-                    ? `${selectedQuestItem.distance_meters > 1000 ? (selectedQuestItem.distance_meters / 1000).toFixed(1) + "km" : Math.round(selectedQuestItem.distance_meters) + "m"}`
+                    ? `Straight-line: ~${selectedQuestItem.distance_meters > 1000 ? (selectedQuestItem.distance_meters / 1000).toFixed(1) + "km" : Math.round(selectedQuestItem.distance_meters) + "m"}`
                     : "Route available upon arrival"}
                 </span>
               </div>

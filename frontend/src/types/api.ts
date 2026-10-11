@@ -8,6 +8,9 @@ export interface QuestStepResponse {
   step_order: number;
   clue: string;
   is_unlocked: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  waypoint_name?: string | null;
 }
 
 export interface QuestResponse {
