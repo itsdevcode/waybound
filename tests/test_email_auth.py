@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core.config import Settings, settings
 from app.core.rate_limit import DatabaseRateLimiter
@@ -245,6 +245,8 @@ def test_production_email_provider_validation():
         auth_secret="a_valid_32_character_production_secret_key_12345",
         email_provider="resend",
         resend_api_key="re_1234567890abcdef",
+        email_from="WAYBOUND <onboarding@resend.dev>",
+        cors_origins="https://waybound-frontend.onrender.com",
     )
     assert valid_cfg.environment == "production"
 
@@ -291,13 +293,19 @@ async def test_forged_x_forwarded_for_rejected():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_at_rate_limit_threshold(db_session: AsyncSession):
+async def test_concurrent_requests_at_rate_limit_threshold(test_engine: AsyncEngine, db_session: AsyncSession):
     """
     Test that concurrent requests executed simultaneously at the rate-limit threshold
     are atomically serialized by PostgreSQL advisory locking and cannot race past the limit.
     """
     import asyncio
-    from app.db.session import AsyncSessionLocal
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    session_factory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
     key = f"race_test:{uuid.uuid4().hex[:6]}"
     threshold = 5
@@ -306,7 +314,7 @@ async def test_concurrent_requests_at_rate_limit_threshold(db_session: AsyncSess
 
     # Launch 10 simultaneous workers attempting to register a hit on the exact same key
     async def worker_attempt() -> int:
-        async with AsyncSessionLocal() as session:
+        async with session_factory() as session:
             try:
                 await limiter.check(key, db=session)
                 return 200
