@@ -13,7 +13,7 @@ QuestStatusType = Literal["draft", "active", "completed", "abandoned"]
 # --- Request Schemas ---
 
 class QuestCreateRequest(BaseModel):
-    user_id: uuid.UUID
+    user_id: uuid.UUID | None = Field(default=None, description="Explorer UUID (optional if authenticated)")
     available_minutes: AvailableMinutesType
     explorer_type: ExplorerType
     difficulty: DifficultyType

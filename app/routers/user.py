@@ -48,7 +48,54 @@ def get_quest_service(
 
 import logging
 
+from app.core.auth import get_current_user
+from app.models.user import User
+
 logger = logging.getLogger(__name__)
+
+
+@router.get(
+    "/me/profile",
+    response_model=ProfileResponse,
+    summary="View authenticated explorer progression",
+    description="Retrieves the profile of the currently authenticated explorer session.",
+)
+async def get_my_profile(
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_user_service),
+) -> ProfileResponse:
+    try:
+        return await service.get_profile(current_user.id)
+    except UserNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except Exception as e:
+        logger.exception("Unexpected error fetching authenticated user profile: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal server error occurred. Please try again later.",
+        )
+
+
+@router.get(
+    "/me/quests",
+    response_model=list[QuestResponse],
+    summary="View authenticated quest history",
+    description="Retrieves quest history for the currently authenticated explorer session.",
+)
+async def get_my_quests(
+    current_user: User = Depends(get_current_user),
+    service: QuestService = Depends(get_quest_service),
+) -> list[QuestResponse]:
+    try:
+        return await service.list_user_quests(current_user.id)
+    except UserNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except Exception as e:
+        logger.exception("Unexpected error fetching authenticated user quests: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal server error occurred. Please try again later.",
+        )
 
 
 @router.get(

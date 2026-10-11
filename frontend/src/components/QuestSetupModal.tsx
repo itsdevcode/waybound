@@ -18,7 +18,12 @@ import type {
   ExplorerType,
   QuestCreateRequest,
 } from "@/types/api";
-import { getCurrentCoordinates, GeolocationError } from "@/lib/geo";
+import {
+  getCurrentCoordinates,
+  GeolocationError,
+  POPULAR_CITIES,
+  type CityPreset,
+} from "@/lib/geo";
 
 interface QuestSetupModalProps {
   userId: string;
@@ -82,6 +87,7 @@ export function QuestSetupModal({
   const [duration, setDuration] = useState<AvailableMinutesType>(30);
   const [archetype, setArchetype] = useState<ExplorerType>("mystery");
   const [difficulty, setDifficulty] = useState<DifficultyType>("medium");
+  const [selectedCity, setSelectedCity] = useState<CityPreset | null>(null);
 
   const [geoState, setGeoState] = useState<{
     coords: { latitude: number; longitude: number; accuracy: number } | null;
@@ -262,38 +268,44 @@ export function QuestSetupModal({
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-purple-200 flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5 text-amber-400" />
-                Physical Location (GPS)
+                Expedition Location
               </span>
               {geoState.coords ? (
                 <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Acquired (±{Math.round(geoState.coords.accuracy)}m)
+                  {selectedCity ? selectedCity.name : `GPS (±${Math.round(geoState.coords.accuracy)}m)`}
                 </span>
               ) : (
-                <span className="text-[11px] text-purple-300/60">Required for live quests</span>
+                <span className="text-[11px] text-purple-300/60">GPS or City required for live maps</span>
               )}
             </div>
 
             {geoState.coords ? (
               <div className="rounded-lg bg-black/40 border border-purple-900/50 p-2.5 text-[11px] font-mono text-purple-200 flex justify-between items-center">
                 <span>
-                  {geoState.coords.latitude.toFixed(5)}, {geoState.coords.longitude.toFixed(5)}
+                  {selectedCity ? `${selectedCity.name} (${selectedCity.region})` : `${geoState.coords.latitude.toFixed(5)}, ${geoState.coords.longitude.toFixed(5)}`}
                 </span>
                 <button
                   type="button"
-                  onClick={handleAcquireLocation}
+                  onClick={() => {
+                    setSelectedCity(null);
+                    void handleAcquireLocation();
+                  }}
                   disabled={geoState.loading}
-                  className="text-xs text-amber-300 hover:underline"
+                  className="text-xs text-amber-300 hover:underline cursor-pointer"
                 >
-                  Update
+                  Use GPS
                 </button>
               </div>
             ) : (
               <button
                 type="button"
-                onClick={handleAcquireLocation}
+                onClick={() => {
+                  setSelectedCity(null);
+                  void handleAcquireLocation();
+                }}
                 disabled={geoState.loading}
-                className="w-full flex items-center justify-center gap-2 rounded-lg border border-purple-700/50 bg-purple-900/40 py-2.5 text-xs font-semibold text-purple-200 hover:bg-purple-800/40 transition disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-purple-700/50 bg-purple-900/40 py-2.5 text-xs font-semibold text-purple-200 hover:bg-purple-800/40 transition disabled:opacity-50 cursor-pointer"
               >
                 {geoState.loading ? (
                   <>
@@ -309,6 +321,37 @@ export function QuestSetupModal({
               </button>
             )}
 
+            {/* City Preset Selection when location denied or manual desired */}
+            <div className="pt-1 space-y-1.5 border-t border-purple-900/40">
+              <span className="text-[11px] text-purple-300/70 font-medium">Or Select Adventure City:</span>
+              <div className="flex flex-wrap gap-1.5">
+                {POPULAR_CITIES.map((city) => {
+                  const isSelected = selectedCity?.name === city.name;
+                  return (
+                    <button
+                      key={city.name}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCity(city);
+                        setGeoState({
+                          coords: { latitude: city.latitude, longitude: city.longitude, accuracy: 50 },
+                          loading: false,
+                          error: null,
+                        });
+                      }}
+                      className={`text-[10px] px-2 py-1 rounded-md border transition cursor-pointer ${
+                        isSelected
+                          ? "bg-amber-500/20 border-amber-400 text-amber-200 font-bold"
+                          : "bg-purple-950/40 border-purple-850 text-purple-300 hover:border-purple-600"
+                      }`}
+                    >
+                      {city.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {geoState.error && (
               <div className="rounded-lg bg-red-950/40 border border-red-800/50 p-2.5 text-[11px] text-red-200 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
@@ -320,7 +363,7 @@ export function QuestSetupModal({
               <Info className="h-3 w-3 shrink-0 mt-0.5 text-purple-400" />
               <span>
                 Simulated demo quests can be generated even without GPS. Live Google Places + Gemma
-                mode strictly requires physical coordinates.
+                mode strictly requires coordinates.
               </span>
             </div>
           </div>

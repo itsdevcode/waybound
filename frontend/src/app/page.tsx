@@ -8,14 +8,16 @@ import { QuestSetupModal } from "@/components/QuestSetupModal";
 import { ActiveQuestView } from "@/components/ActiveQuestView";
 import { QuestVerifyModal } from "@/components/QuestVerifyModal";
 import { QuestCompleteModal } from "@/components/QuestCompleteModal";
-import { UserModal } from "@/components/UserModal";
+import { AuthModal } from "@/components/AuthModal";
 import { PartyLobbyView } from "@/components/PartyLobbyView";
 import { CoopQuestView } from "@/components/CoopQuestView";
 import {
   api,
   ApiError,
   getActiveUserId,
+  setActiveUserId,
   getAuthToken,
+  removeAuthToken,
   getSavedActiveQuestId,
   setSavedActiveQuestId,
 } from "@/lib/api";
@@ -38,7 +40,6 @@ import {
   AlertTriangle,
   RefreshCw,
   Compass,
-  UserX,
   AlertCircle,
   Users,
 } from "lucide-react";
@@ -50,6 +51,7 @@ export default function HomePage() {
     }
     return "";
   });
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   // Mode: Solo Expedition vs Mystery Fellowship (2-Player)
   const [mode, setMode] = useState<"solo" | "coop">("solo");
@@ -68,13 +70,12 @@ export default function HomePage() {
   // Loading and fine-grained error states
   const [loading, setLoading] = useState<boolean>(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [userNotFoundError, setUserNotFoundError] = useState<boolean>(false);
   const [questsError, setQuestsError] = useState<string | null>(null);
 
   // Modals
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState<boolean>(false);
-  const [userModalOpen, setUserModalOpen] = useState<boolean>(false);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [completeResult, setCompleteResult] = useState<QuestVerificationResponse | null>(null);
 
   // Ref to track active party for polling without stale closure
@@ -86,21 +87,17 @@ export default function HomePage() {
   // Ensure authenticated session and refresh parties
   const syncPartyData = useCallback(async () => {
     try {
-      // 1. Establish verified session token without exchanging arbitrary user IDs
       if (!getAuthToken()) {
         try {
           await api.auth.loginDemo();
         } catch {
-          // If in production or demo auth is disabled, user must log in via OTP
           return;
         }
       }
 
-      // 2. Fetch explorer's fellowships
       const partiesList = await api.parties.listMine();
       setMyParties(partiesList);
 
-      // 3. Check if there's an ongoing party
       const currentActive = partiesList.find(
         (p) => p.status === "open" || p.status === "active"
       );
@@ -130,18 +127,28 @@ export default function HomePage() {
 
   // Manual refresh callback
   const refreshData = useCallback(async (targetUserId?: string) => {
-    const idToFetch = targetUserId || userId || getActiveUserId();
-    if (!idToFetch) return;
-
     setLoading(true);
     setConnectionError(null);
-    setUserNotFoundError(false);
     setQuestsError(null);
 
     try {
+      // Check if authenticated
+      const token = getAuthToken();
+      let profilePromise: Promise<ProfileResponse>;
+      let questsPromise: Promise<QuestResponse[]>;
+
+      if (token) {
+        profilePromise = api.getMyProfile();
+        questsPromise = api.getMyQuests();
+      } else {
+        const idToFetch = targetUserId || userId || getActiveUserId();
+        profilePromise = api.getProfile(idToFetch);
+        questsPromise = api.getUserQuests(idToFetch);
+      }
+
       const [profileRes, questsRes] = await Promise.allSettled([
-        api.getProfile(idToFetch),
-        api.getUserQuests(idToFetch),
+        profilePromise,
+        questsPromise,
       ]);
 
       let isConnError = false;
@@ -149,11 +156,14 @@ export default function HomePage() {
       // Handle Profile Result
       if (profileRes.status === "fulfilled") {
         setProfile(profileRes.value);
-        setUserNotFoundError(false);
+        if (profileRes.value.user_id) {
+          setUserId(profileRes.value.user_id);
+          setActiveUserId(profileRes.value.user_id);
+        }
       } else {
         const err = profileRes.reason;
-        if (err instanceof ApiError && err.status === 404) {
-          setUserNotFoundError(true);
+        if (err instanceof ApiError && (err.status === 404 || err.status === 401)) {
+          // Unauthenticated or profile not created yet - show clean onboarding
           setProfile(null);
         } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
           isConnError = true;
@@ -180,7 +190,7 @@ export default function HomePage() {
         });
       } else {
         const err = questsRes.reason;
-        if (err instanceof ApiError && err.status === 404) {
+        if (err instanceof ApiError && (err.status === 404 || err.status === 401)) {
           setQuests([]);
         } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
           if (!isConnError) {
@@ -203,14 +213,34 @@ export default function HomePage() {
   // Initial fetch on mount & identity change
   useEffect(() => {
     let isMounted = true;
-    const currentId = userId || getActiveUserId();
-    if (!currentId) return;
 
     async function fetchInitial() {
       try {
+        const token = getAuthToken();
+        let profilePromise: Promise<ProfileResponse>;
+        let questsPromise: Promise<QuestResponse[]>;
+
+        if (token) {
+          // Also fetch explorer email
+          try {
+            const me = await api.auth.getMe();
+            if (isMounted && me?.email) {
+              setCurrentUserEmail(me.email);
+            }
+          } catch {
+            // Ignore if me check fails
+          }
+          profilePromise = api.getMyProfile();
+          questsPromise = api.getMyQuests();
+        } else {
+          const currentId = userId || getActiveUserId();
+          profilePromise = api.getProfile(currentId);
+          questsPromise = api.getUserQuests(currentId);
+        }
+
         const [profileRes, questsRes] = await Promise.allSettled([
-          api.getProfile(currentId),
-          api.getUserQuests(currentId),
+          profilePromise,
+          questsPromise,
         ]);
 
         if (!isMounted) return;
@@ -220,11 +250,13 @@ export default function HomePage() {
         // 1. Process profile
         if (profileRes.status === "fulfilled") {
           setProfile(profileRes.value);
-          setUserNotFoundError(false);
+          if (profileRes.value.user_id) {
+            setUserId(profileRes.value.user_id);
+            setActiveUserId(profileRes.value.user_id);
+          }
         } else {
           const err = profileRes.reason;
-          if (err instanceof ApiError && err.status === 404) {
-            setUserNotFoundError(true);
+          if (err instanceof ApiError && (err.status === 404 || err.status === 401)) {
             setProfile(null);
           } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
             isConnError = true;
@@ -443,7 +475,7 @@ export default function HomePage() {
         profile={profile}
         loading={loading}
         onRefresh={() => void refreshData(userId)}
-        onOpenUserModal={() => setUserModalOpen(true)}
+        onOpenUserModal={() => setAuthModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -497,31 +529,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* 2. Missing Demo User Banner */}
-        {userNotFoundError && !connectionError && (
-          <div className="rounded-2xl bg-amber-950/50 border border-amber-600/60 p-4 space-y-3 animate-in fade-in">
-            <div className="flex items-start gap-2.5">
-              <UserX className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-bold text-amber-200">Explorer User Not Found in Database</p>
-                <p className="text-xs text-amber-300/80 leading-relaxed">
-                  Explorer ID <code>{userId}</code> does not exist in the database.
-                </p>
-                <p className="text-[11px] text-amber-400/80">
-                  Run <code>PYTHONPATH=. .venv/bin/python3 scripts/seed_demo_user.py</code> or switch identity.
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setUserModalOpen(true)}
-              className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/60 bg-amber-500/20 py-2.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/30 transition cursor-pointer"
-            >
-              <span>Switch or Configure Explorer ID</span>
-            </button>
-          </div>
-        )}
-
-        {/* 3. Partial Failure Warning: Quests Error */}
+        {/* 2. Partial Failure Warning: Quests Error */}
         {questsError && !connectionError && (
           <div className="rounded-xl bg-purple-950/40 border border-purple-800/60 p-3 text-xs text-purple-200 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -611,13 +619,14 @@ export default function HomePage() {
               profile={profile}
               loading={loading}
               onBeginAdventure={() => setSetupModalOpen(true)}
-              onSelectUser={() => setUserModalOpen(true)}
+              onSelectUser={() => setAuthModalOpen(true)}
             />
 
             <QuestHistoryCard
               quests={quests}
               loading={loading}
               onSelectQuest={handleSelectQuestFromJournal}
+              onDiscoverAdventures={() => setSetupModalOpen(true)}
             />
           </div>
         )}
@@ -659,13 +668,25 @@ export default function HomePage() {
         }}
       />
 
-      <UserModal
-        isOpen={userModalOpen}
-        onClose={() => setUserModalOpen(false)}
-        onUserChanged={(newId) => {
-          setUserId(newId);
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        currentEmail={currentUserEmail}
+        onAuthenticated={(session) => {
+          if (session.user_id) {
+            setUserId(session.user_id);
+            setActiveUserId(session.user_id);
+          }
           setSavedActiveQuestId(null);
-          void refreshData(newId);
+          void refreshData(session.user_id);
+        }}
+        onLogout={() => {
+          removeAuthToken();
+          setProfile(null);
+          setQuests([]);
+          setActiveQuest(null);
+          setCurrentUserEmail(null);
+          setSavedActiveQuestId(null);
         }}
       />
     </div>

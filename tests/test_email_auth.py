@@ -328,3 +328,93 @@ async def test_concurrent_requests_at_rate_limit_threshold(test_engine: AsyncEng
     # Exactly threshold successes, remaining must be 429
     assert len(successes) == threshold
     assert len(rate_limited) == 10 - threshold
+
+
+@pytest.mark.asyncio
+async def test_first_time_user_onboarding_automatically_creates_profile(client: AsyncClient, db_session: AsyncSession):
+    """
+    Test that verifying an OTP for a newly seen email automatically creates a User
+    and an Explorer Profile idempotently, without exposing UUID errors.
+    """
+    email = f"new_explorer_{uuid.uuid4().hex[:6]}@example.com"
+    req_resp = await client.post("/api/v1/auth/otp/request", json={"email": email})
+    assert req_resp.status_code == 200
+    code = req_resp.json()["simulated_code"]
+
+    verify_resp = await client.post("/api/v1/auth/otp/verify", json={"email": email, "code": code})
+    assert verify_resp.status_code == 200
+    data = verify_resp.json()
+    assert "token" in data
+    assert data["level"] == 1
+    assert data["xp"] == 0
+    assert data["explorer_type"] == "mystery"
+
+    token = data["token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # Verify /api/v1/users/me/profile returns the newly created explorer profile
+    profile_resp = await client.get("/api/v1/users/me/profile", headers=auth_headers)
+    assert profile_resp.status_code == 200
+    p_data = profile_resp.json()
+    assert p_data["level"] == 1
+    assert p_data["xp"] == 0
+
+    # Verify /api/v1/users/me/quests returns empty quest journal
+    quests_resp = await client.get("/api/v1/users/me/quests", headers=auth_headers)
+    assert quests_resp.status_code == 200
+    assert quests_resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_returning_user_preserves_profile_xp_and_quests(client: AsyncClient, db_session: AsyncSession):
+    """
+    Test that existing users retain their profile, level, and XP upon subsequent logins.
+    """
+    from app.models.profile import Profile
+    from app.models.user import User
+
+    email = f"returning_{uuid.uuid4().hex[:6]}@example.com"
+
+    # Pre-create a returning user with high level and XP in the database
+    user = User(name="Veteran Explorer", email=email)
+    db_session.add(user)
+    await db_session.flush()
+
+    profile = Profile(user_id=user.id, explorer_type="discovery", level=5, xp=2400)
+    db_session.add(profile)
+    await db_session.commit()
+
+    # Log in via email OTP
+    req_resp = await client.post("/api/v1/auth/otp/request", json={"email": email})
+    assert req_resp.status_code == 200
+    code = req_resp.json()["simulated_code"]
+
+    verify_resp = await client.post("/api/v1/auth/otp/verify", json={"email": email, "code": code})
+    assert verify_resp.status_code == 200
+    data = verify_resp.json()
+    assert data["level"] == 5
+    assert data["xp"] == 2400
+    assert data["explorer_type"] == "discovery"
+
+    token = data["token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # Verify /api/v1/users/me/profile retains 2400 XP
+    profile_resp = await client.get("/api/v1/users/me/profile", headers=auth_headers)
+    assert profile_resp.status_code == 200
+    p_data = profile_resp.json()
+    assert p_data["level"] == 5
+    assert p_data["xp"] == 2400
+    assert p_data["explorer_type"] == "discovery"
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_access_to_me_endpoints(client: AsyncClient):
+    """
+    Test that accessing /users/me/profile and /users/me/quests without Bearer token returns 401.
+    """
+    resp1 = await client.get("/api/v1/users/me/profile")
+    assert resp1.status_code == 401
+
+    resp2 = await client.get("/api/v1/users/me/quests")
+    assert resp2.status_code == 401

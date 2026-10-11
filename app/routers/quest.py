@@ -100,19 +100,31 @@ def handle_service_error(e: Exception) -> HTTPException:
     )
 
 
+from app.core.auth import get_current_user_optional
+from app.models.user import User
+
 @router.post(
     "/generate",
     response_model=QuestResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Generate a draft quest",
-    description="Generates a deterministic draft quest for the specified explorer. (Identity note: caller-supplied user_id is demo-only)",
+    description="Generates a draft quest for the authenticated explorer or specified user.",
 )
 async def generate_quest(
     request: QuestCreateRequest,
+    current_user: User | None = Depends(get_current_user_optional),
     service: QuestService = Depends(get_quest_service),
 ) -> QuestResponse:
     try:
-        return await service.generate_quest(request)
+        # If user is authenticated, use authenticated identity; otherwise use caller-provided user_id
+        effective_user_id = current_user.id if current_user else request.user_id
+        if not effective_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to generate quest.",
+            )
+        req_with_user = request.model_copy(update={"user_id": effective_user_id})
+        return await service.generate_quest(req_with_user)
     except Exception as e:
         raise handle_service_error(e)
 

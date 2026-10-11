@@ -100,6 +100,66 @@ describe("Social Mystery Partner Frontend Flows", () => {
       await api.auth.logout();
       expect(getAuthToken()).toBeNull();
     });
+
+    it("fetches authenticated explorer profile and quests via /users/me endpoints", async () => {
+      setAuthToken("wbs_auth_me_test");
+
+      const mockProfile = {
+        id: "profile-1",
+        user_id: "user-1",
+        explorer_type: "mystery",
+        level: 2,
+        xp: 650,
+        social_enabled: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const mockQuests = [
+        {
+          id: "q-1",
+          title: "The Silent Cathedral",
+          description: "Follow the stone steps",
+          difficulty: "easy",
+          estimated_minutes: 15,
+          reward_xp: 100,
+          status: "completed",
+          current_clues: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ];
+
+      const fetchSpy = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockProfile,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockQuests,
+        });
+      globalThis.fetch = fetchSpy;
+
+      const profile = await api.getMyProfile();
+      expect(profile.level).toBe(2);
+      expect(profile.xp).toBe(650);
+
+      const quests = await api.getMyQuests();
+      expect(quests.length).toBe(1);
+      expect(quests[0].title).toBe("The Silent Cathedral");
+
+      expect(fetchSpy).toHaveBeenNthCalledWith(
+        1,
+        "http://localhost:8000/api/v1/users/me/profile",
+        expect.anything()
+      );
+      expect(fetchSpy).toHaveBeenNthCalledWith(
+        2,
+        "http://localhost:8000/api/v1/users/me/quests",
+        expect.anything()
+      );
+    });
   });
 
   describe("Party API Lifecycle", () => {
