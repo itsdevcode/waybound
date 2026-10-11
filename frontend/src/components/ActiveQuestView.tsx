@@ -18,6 +18,9 @@ import {
 } from "lucide-react";
 import type { QuestResponse } from "@/types/api";
 import { isSimulatedQuest } from "@/lib/utils";
+import { useVoiceNarration } from "@/hooks/useVoiceNarration";
+import { NarrationControls } from "@/components/NarrationControls";
+import { VoiceSettingsBar } from "@/components/VoiceSettingsBar";
 
 interface ActiveQuestViewProps {
   quest: QuestResponse;
@@ -41,11 +44,18 @@ export function ActiveQuestView({
   const [abandoning, setAbandoning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const narration = useVoiceNarration();
+
   const isDemo = isSimulatedQuest(quest);
   const isDraft = quest.status === "draft";
   const isActive = quest.status === "active";
   const isCompleted = quest.status === "completed";
   const isAbandoned = quest.status === "abandoned";
+
+  function handleBack() {
+    narration.stop();
+    onBack();
+  }
 
   async function handleStart() {
     setActionError(null);
@@ -78,6 +88,7 @@ export function ActiveQuestView({
     setActionError(null);
     setAbandoning(true);
     try {
+      narration.stop();
       await onAbandonQuest(quest.id);
     } catch (err: unknown) {
       setActionError((err as Error)?.message || "Failed to abandon quest.");
@@ -91,7 +102,7 @@ export function ActiveQuestView({
       {/* Top Navigation */}
       <div className="flex items-center justify-between">
         <button
-          onClick={onBack}
+          onClick={handleBack}
           className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-white transition font-medium"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -104,6 +115,7 @@ export function ActiveQuestView({
               Simulated Demo Quest
             </span>
           )}
+          <VoiceSettingsBar narration={narration} />
           <span
             className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize ${
               isActive
@@ -147,16 +159,34 @@ export function ActiveQuestView({
 
         {/* Quest Story Scroll */}
         <div className="rounded-2xl bg-black/40 border border-purple-900/60 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-purple-400 uppercase">
-            <Scroll className="h-3.5 w-3.5 text-amber-400" />
-            Field Transmission
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-purple-400 uppercase">
+              <Scroll className="h-3.5 w-3.5 text-amber-400" />
+              Field Transmission
+            </div>
+            <NarrationControls
+              trackId="quest-story"
+              textToNarrate={quest.description}
+              activeTrackId={narration.activeTrackId}
+              isPlaying={narration.isPlaying}
+              isPaused={narration.isPaused}
+              isMuted={narration.isMuted}
+              isSupported={narration.isSupported}
+              onPlay={narration.play}
+              onPause={narration.pause}
+              onResume={narration.resume}
+              onStop={narration.stop}
+              onReplay={narration.replay}
+              variant="inline"
+              label="Listen"
+            />
           </div>
           <p className="text-sm text-slate-200 leading-relaxed font-sans italic">
             &ldquo;{quest.description}&rdquo;
           </p>
         </div>
 
-        {/* Target Site Card (Secrecy enforced!) */}
+        {/* Target Site Card (Secrecy strictly enforced! Hidden destination data is never narrated) */}
         <div className="rounded-2xl border border-purple-800/40 bg-purple-950/20 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-900/40 border border-purple-600/30 text-amber-400">
@@ -241,7 +271,25 @@ export function ActiveQuestView({
                     <Sparkles className="h-3 w-3" />
                     Clue #{clue.step_order}
                   </span>
-                  <span className="text-purple-300/60 text-[10px]">Unlocked</span>
+                  <div className="flex items-center gap-2">
+                    <NarrationControls
+                      trackId={`clue-${clue.id}`}
+                      textToNarrate={`Clue number ${clue.step_order}. ${clue.clue}`}
+                      activeTrackId={narration.activeTrackId}
+                      isPlaying={narration.isPlaying}
+                      isPaused={narration.isPaused}
+                      isMuted={narration.isMuted}
+                      isSupported={narration.isSupported}
+                      onPlay={narration.play}
+                      onPause={narration.pause}
+                      onResume={narration.resume}
+                      onStop={narration.stop}
+                      onReplay={narration.replay}
+                      variant="inline"
+                      label="Listen"
+                    />
+                    <span className="text-purple-300/60 text-[10px]">Unlocked</span>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-100 font-medium leading-relaxed">
                   {clue.clue}
@@ -255,9 +303,27 @@ export function ActiveQuestView({
       {/* Observation Challenge (if unlocked by active/completed status) */}
       {quest.verification_prompt && (
         <div className="card-runic-gold rounded-2xl p-4 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
-            <Eye className="h-4 w-4" />
-            Field Observation Challenge
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+              <Eye className="h-4 w-4" />
+              Field Observation Challenge
+            </div>
+            <NarrationControls
+              trackId="observation-challenge"
+              textToNarrate={`Field Observation Challenge. ${quest.verification_prompt}`}
+              activeTrackId={narration.activeTrackId}
+              isPlaying={narration.isPlaying}
+              isPaused={narration.isPaused}
+              isMuted={narration.isMuted}
+              isSupported={narration.isSupported}
+              onPlay={narration.play}
+              onPause={narration.pause}
+              onResume={narration.resume}
+              onStop={narration.stop}
+              onReplay={narration.replay}
+              variant="inline"
+              label="Listen"
+            />
           </div>
           <p className="text-xs text-amber-100/90 leading-relaxed font-sans">
             {quest.verification_prompt}
