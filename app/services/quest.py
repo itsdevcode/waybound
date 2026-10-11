@@ -275,9 +275,32 @@ class QuestService:
                     status_code=400,
                 )
 
-            is_simulation = quest.destination_name.startswith("[Simulated Demo]")
+            # Physical arrival security check: Manual city/coordinates restriction
+            # HTML5 Geolocation coordinates must represent live GPS presence to award public progression XP.
+            # Manual location overrides never qualify as verified physical arrival and award 0 XP.
+
+            is_simulation = (
+                quest.destination_name.startswith("[Simulated Demo]")
+                or "[Simulated" in quest.destination_name
+                or "[Demo" in quest.destination_name
+            )
 
             # Check observation answer (case-insensitive trimmed comparison)
+            # NOTE ON PHYSICAL ARRIVAL SECURITY & AI-GENERATED ANSWERS:
+            # AI-generated observation challenges provide interactive engagement at the site,
+            # but AI text output cannot be treated as cryptographically authoritative proof of presence.
+            # Physical arrival is fundamentally anchored by server-side Haversine geofence verification
+            # (<= verification_radius_meters) against the secret destination coordinates.
+            #
+            # LIMITATION NOTICE ON GPS SPOOFING:
+            # Client-reported coordinates from mobile browsers (HTML5 Geolocation API) are inherently
+            # vulnerable to device-level mock locations or GPS spoofing tools without hardware-backed
+            # cryptographic attestation (such as Android Play Integrity API or iOS App Attest).
+            # Defense-in-depth is enforced via:
+            # 1. Zero coordinate leakage: Target coordinates are never transmitted to client before completion.
+            # 2. Strict server-side geofencing (<=100m) against stored destination coordinates.
+            # 3. Explicit rejection of manual coordinates (request.is_manual_location).
+            # 4. Atomic row-locking (with_for_update) preventing repeat or duplicate XP awards.
             normalized_answer = request.observation_answer.strip().lower()
             expected_answer = quest.verification_answer.strip().lower()
 
@@ -304,18 +327,17 @@ class QuestService:
             if not profile:
                 raise UserNotFoundError("Explorer profile not found for quest owner")
 
-            # Real-world verification safety:
-            # Simulated demo quests are eligible for XP under verified simulation rules.
-            # Real-world Google Places + Gemma quests award 0 XP while AI-generated observation answers
-            # remain unverified, ensuring no progression XP is awarded based on unverified ground truth.
-            # Additionally, if the client submitted manual city selection or unverified coordinates,
-            # zero XP is awarded to prevent spoofing or bypassing physical presence.
+            # Real-world vs Simulated XP policy:
+            # - Real-world quests verified by GPS within geofence legitimately award public XP.
+            # - Simulated demo quests award 0 public progression XP to prevent leaderboard inflation.
+            # - Manual location selections award 0 public progression XP (physical arrival requires live GPS).
+            # - Repeat completions are strictly prevented by the with_for_update row lock & status check above.
             if request.is_manual_location:
                 awarded_xp = 0
             elif is_simulation:
-                awarded_xp = quest.reward_xp
-            else:
                 awarded_xp = 0
+            else:
+                awarded_xp = quest.reward_xp
 
             if awarded_xp > 0:
                 profile.xp += awarded_xp
@@ -337,13 +359,11 @@ class QuestService:
 
         if is_simulation:
             completion_message = (
-                "[Simulated Demo] Quest verified successfully in simulation mode. Destination details unlocked. "
-                "(Notice: Simulated test scenario, not field-verified outdoor exploration)."
+                "Simulated quest completed. No public XP awarded for simulated demo scenarios."
             )
         else:
             completion_message = (
-                "Quest completed and destination unlocked! Notice: Real-world progression XP is withheld pending "
-                "field-verified observation ground truth."
+                f"Quest verified and destination unlocked! You earned {awarded_xp} XP."
             )
 
         return QuestVerificationResponse(
@@ -367,8 +387,9 @@ class QuestService:
         Discovers nearby quests and exploration markers within the specified radius.
         Includes:
         1. Any active, draft, or completed quests associated with the explorer within the radius.
-        2. Configured exploration destinations (from provider or simulated catalog) within radius.
-        Maintains secrecy: Only active quest destinations or completed destinations disclose target details.
+        2. Real public exploration destinations discovered via Google Places API (New).
+        Never returns simulated catalog or default demo destinations in production.
+        Maintains secrecy: Only completed quests disclose actual target coordinates.
         """
         if not math.isfinite(latitude) or not math.isfinite(longitude):
             raise ValueError("Geographic coordinates must be finite real numbers.")
@@ -423,10 +444,9 @@ class QuestService:
                         )
                     )
 
-        # 2. Add available exploration candidate destinations
-        # Check if Google Places API is configured or if provider is google_places_gemma
+        # 2. Add real public exploration destinations discovered via Google Places API (New)
+        # Never fall back to simulated catalogs or demo destinations
         is_google_places_enabled = bool(settings.google_maps_api_key.strip())
-        real_places_found = False
 
         if is_google_places_enabled:
             try:
@@ -451,7 +471,7 @@ class QuestService:
                         NearbyQuestItem(
                             id=None,
                             title=f"The Mystery of {candidate.name}",
-                            description=f"Real-world public {type_formatted}. Discover history and local secrets at this verified landmark.",
+                            description=f"Real-world public {type_formatted}. Discover history and local secrets near this location.",
                             difficulty="medium",
                             estimated_minutes=30,
                             reward_xp=150,
@@ -464,47 +484,11 @@ class QuestService:
                             is_simulated=False,
                         )
                     )
-                if place_candidates:
-                    real_places_found = True
             except Exception as e:
                 logger.warning(
-                    "Google Places discovery failed in get_nearby_quests, falling back to simulated catalog: %s",
+                    "Google Places discovery failed in get_nearby_quests: %s",
                     type(e).__name__,
                 )
-
-        # 3. Explicit simulated demo fallback when Google Places is unconfigured or returns no results
-        if not real_places_found:
-            from app.services.providers.demo import DEFAULT_DEMO_DESTINATIONS
-
-            for candidate in DEFAULT_DEMO_DESTINATIONS:
-                coord_key = (round(candidate.latitude, 5), round(candidate.longitude, 5))
-                if coord_key in seen_coords:
-                    continue
-
-                dist = calculate_haversine_distance_meters(
-                    latitude, longitude, candidate.latitude, candidate.longitude
-                )
-                # If within radius
-                if dist <= radius_meters:
-                    seen_coords.add(coord_key)
-                    title_clean = candidate.name.replace("[Simulated Demo] ", "[Demo Scenario] ")
-                    nearby_items.append(
-                        NearbyQuestItem(
-                            id=None,
-                            title=title_clean,
-                            description=f"[Simulated POI - 0 XP] {candidate.description[:140]}...",
-                            difficulty=candidate.difficulties[0] if candidate.difficulties else "medium",
-                            estimated_minutes=candidate.suitable_minutes[0] if candidate.suitable_minutes else 30,
-                            reward_xp=150,
-                            status="available",
-                            latitude=candidate.latitude,
-                            longitude=candidate.longitude,
-                            distance_meters=round(dist, 1),
-                            verification_radius_meters=settings.verification_radius_meters,
-                            is_active=False,
-                            is_simulated=True,
-                        )
-                    )
 
         # Sort by distance (nearest first)
         nearby_items.sort(key=lambda item: item.distance_meters)

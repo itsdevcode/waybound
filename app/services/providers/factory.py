@@ -21,6 +21,10 @@ def create_quest_provider(mode: str | None = None) -> QuestProvider:
     provider_mode = mode or settings.quest_provider
 
     if provider_mode == "demo":
+        if settings.environment == "production" and mode == "demo":
+            raise ValueError(
+                "Production configuration error: 'demo' quest provider is forbidden in production. Configure 'google_places_gemma'."
+            )
         logger.info("Initializing QuestProvider in 'demo' simulated mode")
         return DemoQuestProvider()
 

@@ -755,9 +755,13 @@ export default function HomePage() {
                   const isSelected = selectedQuestItem?.title === item.title;
                   const isActive = item.status === "active";
                   const isCompleted = item.status === "completed";
-                  const durationWalk = isSelected && routeInfo
+                  const durationWalk = item.is_destination_secret
+                    ? "Mystery location"
+                    : isSelected && routeInfo && !routeInfo.isMystery
                     ? routeInfo.durationText
-                    : `~${estimateWalkingMinutes(item.distance_meters)} min walk`;
+                    : item.distance_meters > 0
+                    ? `${item.distance_meters > 1000 ? (item.distance_meters / 1000).toFixed(1) + "km" : Math.round(item.distance_meters) + "m"}`
+                    : "Nearby";
 
                   return (
                     <div
@@ -777,11 +781,11 @@ export default function HomePage() {
                             </h4>
                             {item.is_simulated ? (
                               <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
-                                Demo POI
+                                Demo Scenario
                               </span>
                             ) : (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                                Real Landmark
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                                {item.status === "completed" ? "Verified" : "Discovered Place"}
                               </span>
                             )}
                           </div>
@@ -1046,11 +1050,11 @@ export default function HomePage() {
                   </h3>
                   {selectedQuestItem.is_simulated ? (
                     <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30">
-                      Demo POI (0 XP)
+                      Demo Scenario (0 XP)
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                      Verified Landmark
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                      {selectedQuestItem.status === "completed" ? "Verified Landmark" : "Discovered Location"}
                     </span>
                   )}
                 </div>
@@ -1077,9 +1081,13 @@ export default function HomePage() {
               <div className="flex items-center gap-1.5">
                 <Navigation className="h-3.5 w-3.5 text-purple-400" />
                 <span>
-                  {routeInfo
+                  {selectedQuestItem.is_destination_secret
+                    ? "Mystery (follow hints)"
+                    : routeInfo && !routeInfo.isMystery
                     ? `${routeInfo.durationText} (${routeInfo.distanceText})`
-                    : `~${estimateWalkingMinutes(selectedQuestItem.distance_meters)} min walk`}
+                    : selectedQuestItem.distance_meters > 0
+                    ? `${selectedQuestItem.distance_meters > 1000 ? (selectedQuestItem.distance_meters / 1000).toFixed(1) + "km" : Math.round(selectedQuestItem.distance_meters) + "m"}`
+                    : "Route available upon arrival"}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">

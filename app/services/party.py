@@ -825,12 +825,17 @@ class PartyService:
         partner_ver = v_map.get(partner_membership.user_id) if partner_membership else None
         both_verified = partner_ver is not None and partner_ver.verified
 
-        is_simulation = quest.destination_name.startswith("[Simulated Demo]")
+        is_simulation = (
+            quest.destination_name.startswith("[Simulated Demo]")
+            or "[Simulated" in quest.destination_name
+            or "[Demo" in quest.destination_name
+        )
 
-        # XP rules: Award XP atomically. Only simulated quests award XP; real-world awards 0 XP until field ground truth verified.
+        # XP rules: Award XP atomically. Real-world quests award legitimate XP upon completion.
+        # Simulated demo quests award 0 public progression XP.
         # Prevent duplicate grants:
         awarded_xp = 0
-        if both_verified and is_simulation:
+        if both_verified and not is_simulation:
             awarded_xp = quest.reward_xp
 
         # Lock and update explorer profile
@@ -848,7 +853,7 @@ class PartyService:
             party.status = "completed"
 
             # Award XP to both members
-            if is_simulation and quest.reward_xp > 0:
+            if not is_simulation and quest.reward_xp > 0:
                 my_ver.reward_xp_awarded = quest.reward_xp
                 my_profile.xp += quest.reward_xp
                 my_profile.level = calculate_profile_level(my_profile.xp)

@@ -171,8 +171,8 @@ async def test_nearby_quests_google_places_discovery(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_nearby_quests_provider_failure_falls_back_to_demo(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
-    """When Google Places provider raises an error or fails, fallback safely to demo destinations labeled as simulated."""
+async def test_nearby_quests_provider_failure_never_returns_simulated_catalog(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
+    """When Google Places provider raises an error or fails, it must never return simulated catalog or demo destinations."""
     from app.core.config import settings
     from app.services.places import GooglePlacesService
 
@@ -192,12 +192,9 @@ async def test_nearby_quests_provider_failure_falls_back_to_demo(monkeypatch: py
     assert res.status_code == 200
     data = res.json()
 
-    # Must fall back gracefully to demo destinations and explicitly label them simulated
-    assert data["total_count"] > 0
-    first = data["items"][0]
-    assert first["is_simulated"] is True
-    assert "[Demo Scenario]" in first["title"]
-    assert "0 XP" in first["description"]
+    # Must return empty items, NEVER simulated catalog items
+    assert data["total_count"] == 0
+    assert len(data["items"]) == 0
 
 
 @pytest.mark.asyncio
@@ -395,6 +392,10 @@ async def test_gps_arrival_verification_and_single_xp_award(
     quest_repo = QuestRepository(db_session)
     stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
     assert stored_quest is not None
+    # Designate as genuine real-world landmark quest
+    stored_quest.destination_name = "Palace of Fine Arts"
+    await db_session.commit()
+
     real_lat = float(stored_quest.destination_latitude)
     real_lon = float(stored_quest.destination_longitude)
     answer = stored_quest.verification_answer
@@ -412,13 +413,14 @@ async def test_gps_arrival_verification_and_single_xp_award(
     assert far_res.status_code == 400
     assert "not within the target destination area" in far_res.json()["detail"]
 
-    # B) Legitimate arrival within geofence with correct answer -> Success & XP awarded
+    # B) Legitimate arrival within geofence with correct answer -> Success & XP legitimately awarded
     success_res = await client.post(
         f"/api/v1/quests/{quest_id}/verify",
         json={
             "latitude": real_lat,
             "longitude": real_lon,
             "observation_answer": answer,
+            "is_manual_location": False,
         },
         headers=auth_headers,
     )
@@ -427,8 +429,9 @@ async def test_gps_arrival_verification_and_single_xp_award(
     assert data["success"] is True
     assert data["quest"]["status"] == "completed"
     first_awarded_xp = data["reward_xp_awarded"]
-    assert first_awarded_xp > 0
+    assert first_awarded_xp == stored_quest.reward_xp
     assert data["total_xp"] == first_awarded_xp
+    assert "earned" in data["message"]
 
     # C) Attempt duplicate verification on already completed quest -> 409 conflict, no extra XP
     duplicate_res = await client.post(
@@ -442,6 +445,153 @@ async def test_gps_arrival_verification_and_single_xp_award(
     )
     assert duplicate_res.status_code == 409
     assert "already completed" in duplicate_res.json()["detail"]
+
+    # D) Verification with manual location override on a new quest -> Completes with 0 XP awarded
+    create_manual = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 15,
+            "explorer_type": "discovery",
+            "difficulty": "easy",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    manual_qid = create_manual.json()["id"]
+    await client.post(f"/api/v1/quests/{manual_qid}/start", headers=auth_headers)
+    manual_q = await quest_repo.get_by_id(uuid.UUID(manual_qid))
+    assert manual_q is not None
+    manual_q.destination_name = "Palace of Fine Arts"
+    await db_session.commit()
+
+    manual_res = await client.post(
+        f"/api/v1/quests/{manual_qid}/verify",
+        json={
+            "latitude": float(manual_q.destination_latitude),
+            "longitude": float(manual_q.destination_longitude),
+            "observation_answer": manual_q.verification_answer,
+            "is_manual_location": True,
+        },
+        headers=auth_headers,
+    )
+    assert manual_res.status_code == 200
+    manual_data = manual_res.json()
+    assert manual_data["success"] is True
+    assert manual_data["reward_xp_awarded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_simulated_quest_completion_awards_zero_public_xp(
+    client: AsyncClient, db_session
+):
+    """Ensure simulated demo quests complete without awarding public progression XP."""
+    import uuid
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"sim_tester_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "Sim Tester", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    create_res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 15,
+            "explorer_type": "mystery",
+            "difficulty": "easy",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    quest_id = create_res.json()["id"]
+
+    await client.post(f"/api/v1/quests/{quest_id}/start", headers=auth_headers)
+
+    from app.repositories.quest import QuestRepository
+    quest_repo = QuestRepository(db_session)
+    stored_quest = await quest_repo.get_by_id(uuid.UUID(quest_id))
+    assert stored_quest is not None
+    # Explicit simulated demo destination tag
+    stored_quest.destination_name = "[Simulated Demo] Central Library Courtyard"
+    await db_session.commit()
+
+    real_lat = float(stored_quest.destination_latitude)
+    real_lon = float(stored_quest.destination_longitude)
+    answer = stored_quest.verification_answer
+
+    verify_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": real_lat,
+            "longitude": real_lon,
+            "observation_answer": answer,
+        },
+        headers=auth_headers,
+    )
+    assert verify_res.status_code == 200
+    v_data = verify_res.json()
+    assert v_data["success"] is True
+    assert v_data["quest"]["status"] == "completed"
+    # Simulated quests must NOT award public progression XP
+    assert v_data["reward_xp_awarded"] == 0
+    assert v_data["total_xp"] == 0
+    assert "No public XP awarded" in v_data["message"]
+
+
+@pytest.mark.asyncio
+async def test_quest_generation_places_failure_never_returns_simulated_quest(
+    monkeypatch: pytest.MonkeyPatch, client: AsyncClient, db_session
+):
+    """Prove that Google Places failure during quest generation returns an explicit error and never a simulated quest."""
+    import uuid
+    from app.core.config import settings
+    from app.services.places import GooglePlacesService
+    from tests.test_social_party import create_user_and_auth
+
+    email = f"real_tester_{uuid.uuid4().hex[:6]}@example.com"
+    user, token = await create_user_and_auth(client, db_session, "Real Tester", email)
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    monkeypatch.setattr(settings, "quest_provider", "google_places_gemma")
+    monkeypatch.setattr(settings, "google_maps_api_key", "test_maps_key")
+    monkeypatch.setattr(settings, "gemma_api_key", "test_gemma_key")
+
+    # Mock search_nearby_places returning empty list (0 places discovered)
+    async def mock_empty_places(self, *args, **kwargs):
+        return []
+
+    monkeypatch.setattr(GooglePlacesService, "search_nearby_places", mock_empty_places)
+
+    res = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": str(user.id),
+            "available_minutes": 30,
+            "explorer_type": "discovery",
+            "difficulty": "medium",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        headers=auth_headers,
+    )
+    # Must fail with an explicit 404 error, NEVER generate a simulated demo quest
+    assert res.status_code == 404
+    err_detail = res.json()["detail"]
+    assert "No suitable public exploration locations found nearby" in err_detail
+    assert "Simulated" not in err_detail
+
+
+def test_demo_quest_provider_forbidden_in_production(monkeypatch: pytest.MonkeyPatch):
+    """Prove that 'demo' quest provider mode is strictly forbidden in production."""
+    from app.core.config import settings
+    from app.services.providers.factory import create_quest_provider
+
+    monkeypatch.setattr(settings, "environment", "production")
+    with pytest.raises(ValueError, match="forbidden in production"):
+        create_quest_provider(mode="demo")
 
 
 

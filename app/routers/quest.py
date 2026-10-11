@@ -138,6 +138,12 @@ async def generate_quest(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        if is_production and (settings.quest_provider == "demo" or service.provider.__class__.__name__ == "DemoQuestProvider"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Simulated quest generation is disabled in production. Real location discovery required.",
+            )
+
         req_with_user = request.model_copy(update={"user_id": effective_user_id})
         return await service.generate_quest(req_with_user)
     except Exception as e:

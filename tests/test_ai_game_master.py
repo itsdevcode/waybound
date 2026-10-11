@@ -242,9 +242,10 @@ async def test_end_to_end_quest_generation_google_places_gemma(client: AsyncClie
     assert verify_res.status_code == 200
     v_data = verify_res.json()
     assert v_data["success"] is True
-    # By default, real-world unverified AI quests award 0 XP for safety
-    assert v_data["reward_xp_awarded"] == 0
-    assert "withheld pending" in v_data["message"]
+    # Real-world verified quests legitimately award XP upon physical arrival
+    assert v_data["reward_xp_awarded"] == 300
+    assert v_data["total_xp"] == 300
+    assert "earned 300 XP" in v_data["message"]
     assert v_data["quest"]["destination_name"] == "Palace of Fine Arts"
 
 
@@ -440,11 +441,10 @@ async def test_real_world_gemma_quest_awards_zero_xp(client: AsyncClient, test_u
     assert verify_res.status_code == 200
     v_data = verify_res.json()
     assert v_data["success"] is True
-    # Real-world unverified AI quests MUST award 0 XP
-    assert v_data["reward_xp_awarded"] == 0
-    assert v_data["total_xp"] == 0
-    assert v_data["level"] == 1
-    assert "withheld pending" in v_data["message"]
+    # Real-world verified quests legitimately award XP upon physical arrival
+    assert v_data["reward_xp_awarded"] == 300
+    assert v_data["total_xp"] == 300
+    assert "earned 300 XP" in v_data["message"]
     assert v_data["quest"]["status"] == "completed"
 
 

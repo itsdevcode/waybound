@@ -15,7 +15,7 @@ import {
   Crosshair,
 } from "lucide-react";
 import { useGoogleMaps, reverseGeocodeCoordinates, estimateWalkingMinutes, getGoogleMapsNavigationUrl } from "@/lib/maps";
-import { GoogleMapView } from "@/components/GoogleMapView";
+import { GoogleMapView, type CalculatedRouteInfo } from "@/components/GoogleMapView";
 import { RadarMapView } from "@/components/RadarMapView";
 import { POPULAR_CITIES, getCurrentCoordinates, GeolocationError, type CityPreset } from "@/lib/geo";
 import { api } from "@/lib/api";
@@ -61,11 +61,7 @@ export function ExploreMapModal({
   const [nearbyQuests, setNearbyQuests] = useState<NearbyQuestItem[]>([]);
   const [loadingQuests, setLoadingQuests] = useState<boolean>(false);
   const [selectedQuest, setSelectedQuest] = useState<NearbyQuestItem | null>(null);
-  const [routeInfo, setRouteInfo] = useState<{
-    distanceText: string;
-    durationText: string;
-    durationMinutes: number;
-  } | null>(null);
+  const [routeInfo, setRouteInfo] = useState<CalculatedRouteInfo | null>(null);
   const [startingQuestId, setStartingQuestId] = useState<string | null>(null);
 
   // Manual City fallback selector
@@ -438,26 +434,30 @@ export function ExploreMapModal({
                   {/* Walking Route ETA: Verified Google Route Duration vs Straight-Line Estimate */}
                   <div className="flex items-center justify-between pt-1 text-xs text-purple-300/70">
                     <span>
-                      {routeInfo
+                      {selectedQuest.is_destination_secret
+                        ? "Mystery Destination (follow hints)"
+                        : routeInfo && !routeInfo.isMystery
                         ? `Route: ${routeInfo.durationText} (${routeInfo.distanceText})`
-                        : etaMinutes > 0
-                        ? `Straight-Line Est: ~${etaMinutes} min`
+                        : selectedQuest.distance_meters > 0
+                        ? `${selectedQuest.distance_meters > 1000 ? (selectedQuest.distance_meters / 1000).toFixed(1) + "km" : Math.round(selectedQuest.distance_meters) + "m"}`
                         : "Distance N/A"}
                     </span>
-                    <a
-                      href={getGoogleMapsNavigationUrl(
-                        selectedQuest.latitude,
-                        selectedQuest.longitude,
-                        userLocation?.latitude,
-                        userLocation?.longitude
-                      )}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-purple-300 hover:text-white underline"
-                    >
-                      Google Maps
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
+                    {!selectedQuest.is_destination_secret && (
+                      <a
+                        href={getGoogleMapsNavigationUrl(
+                          selectedQuest.latitude,
+                          selectedQuest.longitude,
+                          userLocation?.latitude,
+                          userLocation?.longitude
+                        )}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-purple-300 hover:text-white underline"
+                      >
+                        Google Maps
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
                   </div>
 
                   {/* Action Button */}
