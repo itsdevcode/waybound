@@ -13,7 +13,7 @@ QuestStatusType = Literal["draft", "active", "completed", "abandoned"]
 # --- Request Schemas ---
 
 class QuestCreateRequest(BaseModel):
-    user_id: uuid.UUID
+    user_id: uuid.UUID | None = Field(default=None, description="Explorer UUID (optional if authenticated)")
     available_minutes: AvailableMinutesType
     explorer_type: ExplorerType
     difficulty: DifficultyType
@@ -25,6 +25,10 @@ class QuestVerifyRequest(BaseModel):
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Observed latitude")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Observed longitude")
     observation_answer: str = Field(..., min_length=1, max_length=500, description="User observation answer")
+    is_manual_location: bool = Field(
+        default=False,
+        description="Flag indicating if the observation location was manually selected without verified native GPS",
+    )
 
 
 # --- Response Clue Schema ---

@@ -189,6 +189,20 @@ async def verify_email_otp(
         db.add(profile)
         await db.flush()
         user.profile = profile
+    elif not user.profile:
+        # Guarantee profile existence for existing user missing profile record
+        profile_stmt = select(Profile).where(Profile.user_id == user.id)
+        profile = (await db.execute(profile_stmt)).scalars().first()
+        if not profile:
+            profile = Profile(
+                user_id=user.id,
+                explorer_type="mystery",
+                level=1,
+                xp=0,
+            )
+            db.add(profile)
+            await db.flush()
+        user.profile = profile
 
     raw_token = create_session_token()
     token_hash = hash_token(raw_token)

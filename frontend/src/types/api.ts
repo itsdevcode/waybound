@@ -40,6 +40,7 @@ export interface QuestVerifyRequest {
   latitude: number;
   longitude: number;
   observation_answer: string;
+  is_manual_location?: boolean;
 }
 
 export interface QuestVerificationResponse {

@@ -102,3 +102,21 @@ export async function getCurrentCoordinates(): Promise<GeoCoordinates> {
     );
   });
 }
+
+export interface CityPreset {
+  name: string;
+  region: string;
+  latitude: number;
+  longitude: number;
+}
+
+export const POPULAR_CITIES: CityPreset[] = [
+  { name: "San Francisco", region: "CA, USA", latitude: 37.7749, longitude: -122.4194 },
+  { name: "New York", region: "NY, USA", latitude: 40.7128, longitude: -74.006 },
+  { name: "London", region: "UK", latitude: 51.5074, longitude: -0.1278 },
+  { name: "Tokyo", region: "Japan", latitude: 35.6762, longitude: 139.6503 },
+  { name: "Paris", region: "France", latitude: 48.8566, longitude: 2.3522 },
+  { name: "Seattle", region: "WA, USA", latitude: 47.6062, longitude: -122.3321 },
+  { name: "Austin", region: "TX, USA", latitude: 30.2672, longitude: -97.7431 },
+  { name: "Berlin", region: "Germany", latitude: 52.52, longitude: 13.405 },
+];

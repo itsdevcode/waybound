@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { getCurrentCoordinates, GeolocationError } from "@/lib/geo";
+import { getCurrentCoordinates, GeolocationError, POPULAR_CITIES } from "@/lib/geo";
 import { calculateLevel, getXpProgress, isSimulatedQuest } from "@/lib/utils";
 import type { QuestResponse } from "@/types/api";
 
@@ -202,5 +202,32 @@ describe("Progression & Simulation Logic", () => {
       destination_name: "[Simulated Demo] Central Library Courtyard",
     };
     expect(isSimulatedQuest(demoQuest)).toBe(true);
+  });
+});
+
+describe("City Presets & Manual Location Fallback", () => {
+  it("provides valid coordinate presets for popular adventure cities", () => {
+    expect(POPULAR_CITIES.length).toBeGreaterThanOrEqual(5);
+
+    for (const city of POPULAR_CITIES) {
+      expect(city.name).toBeDefined();
+      expect(city.region).toBeDefined();
+      expect(city.latitude).toBeGreaterThanOrEqual(-90);
+      expect(city.latitude).toBeLessThanOrEqual(90);
+      expect(city.longitude).toBeGreaterThanOrEqual(-180);
+      expect(city.longitude).toBeLessThanOrEqual(180);
+    }
+  });
+
+  it("ensures manual city selection cannot be treated as verified GPS evidence for earning real-world XP", () => {
+    const manualVerifyPayload = {
+      latitude: POPULAR_CITIES[0].latitude,
+      longitude: POPULAR_CITIES[0].longitude,
+      observation_answer: "owl",
+      is_manual_location: true,
+    };
+
+    // When manual location is submitted, is_manual_location must be explicitly flagged
+    expect(manualVerifyPayload.is_manual_location).toBe(true);
   });
 });

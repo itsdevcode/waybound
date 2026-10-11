@@ -52,7 +52,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+from app.core.auth import get_current_user_optional
+from app.core.config import settings
+from app.models.user import User
+
+
 def handle_service_error(e: Exception) -> HTTPException:
+    if isinstance(e, HTTPException):
+        return e
     if isinstance(e, QuestNotFoundError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
     if isinstance(e, UserNotFoundError):
@@ -105,14 +112,32 @@ def handle_service_error(e: Exception) -> HTTPException:
     response_model=QuestResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Generate a draft quest",
-    description="Generates a deterministic draft quest for the specified explorer. (Identity note: caller-supplied user_id is demo-only)",
+    description="Generates a draft quest for the authenticated explorer or specified user.",
 )
 async def generate_quest(
     request: QuestCreateRequest,
+    current_user: User | None = Depends(get_current_user_optional),
     service: QuestService = Depends(get_quest_service),
 ) -> QuestResponse:
     try:
-        return await service.generate_quest(request)
+        is_production = settings.environment == "production"
+        demo_allowed = (not is_production) and settings.allow_demo_auth
+
+        if current_user:
+            # Always derive effective user ID strictly from verified session
+            effective_user_id = current_user.id
+        elif demo_allowed and request.user_id:
+            # Preserve demo compatibility strictly in non-production environments
+            effective_user_id = request.user_id
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to generate quest. Please provide a valid session token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        req_with_user = request.model_copy(update={"user_id": effective_user_id})
+        return await service.generate_quest(req_with_user)
     except Exception as e:
         raise handle_service_error(e)
 

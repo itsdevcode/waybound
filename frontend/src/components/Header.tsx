@@ -26,9 +26,6 @@ export function Header({ profile, loading, onRefresh, onOpenUserModal }: HeaderP
               <span className="font-extrabold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-purple-200 via-amber-200 to-amber-400 text-lg leading-none">
                 WAYBOUND
               </span>
-              <span className="rounded bg-amber-500/10 border border-amber-500/30 px-1 py-0.2 text-[9px] font-bold text-amber-300">
-                MVP
-              </span>
             </div>
             <p className="text-[10px] text-purple-300/60 font-medium tracking-wide">
               AI Real-World Mystery Quests

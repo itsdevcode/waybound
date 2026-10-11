@@ -207,10 +207,29 @@ export const api = {
   },
 
   /**
+   * Authenticated Explorer Profile
+   * GET /api/v1/users/me/profile
+   */
+  async getMyProfile(): Promise<ProfileResponse> {
+    return request<ProfileResponse>("/api/v1/users/me/profile");
+  },
+
+  /**
+   * Authenticated Explorer Quest History
+   * GET /api/v1/users/me/quests
+   */
+  async getMyQuests(): Promise<QuestResponse[]> {
+    return request<QuestResponse[]>("/api/v1/users/me/quests");
+  },
+
+  /**
    * Explorer Profile
    * GET /api/v1/users/{user_id}/profile
    */
   async getProfile(userId: string): Promise<ProfileResponse> {
+    if (!userId || userId === "me") {
+      return this.getMyProfile();
+    }
     return request<ProfileResponse>(`/api/v1/users/${encodeURIComponent(userId)}/profile`);
   },
 
@@ -219,6 +238,9 @@ export const api = {
    * GET /api/v1/users/{user_id}/quests
    */
   async getUserQuests(userId: string): Promise<QuestResponse[]> {
+    if (!userId || userId === "me") {
+      return this.getMyQuests();
+    }
     return request<QuestResponse[]>(`/api/v1/users/${encodeURIComponent(userId)}/quests`);
   },
 
