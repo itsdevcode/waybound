@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/waybound-banner.svg" alt="WAYBOUND — Turn Real Places Into Real Adventures" width="100%" />
+<img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/waybound-banner.svg" alt="WAYBOUND — Turn Real Places Into Real Adventures" width="100%" />
 
 # WAYBOUND
 
@@ -11,45 +11,45 @@ WAYBOUND transforms ordinary neighborhood walks and nearby public landmarks into
 
 <!-- Quick Action Navigation -->
 <p align="center">
-  <a href="https://waybound-frontend.onrender.com/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/cta-play.svg" alt="Play WAYBOUND" /></a>
+  <a href="https://waybound-frontend.onrender.com/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/cta-play.svg" alt="Play WAYBOUND" /></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/itsdevcode/waybound"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/cta-source.svg" alt="View Source" /></a>
+  <a href="https://github.com/itsdevcode/waybound"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/cta-source.svg" alt="View Source" /></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/itsdevcode/waybound/issues/new?template=bug_report.md"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/cta-bug.svg" alt="Report Bug" /></a>
+  <a href="https://github.com/itsdevcode/waybound/issues/new?template=bug_report.md"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/cta-bug.svg" alt="Report Bug" /></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/itsdevcode/waybound/issues/new?template=feature_request.md"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/cta-feature.svg" alt="Request Feature" /></a>
+  <a href="https://github.com/itsdevcode/waybound/issues/new?template=feature_request.md"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/cta-feature.svg" alt="Request Feature" /></a>
 </p>
 
 <!-- Project Status & GitHub Stats -->
 <p align="center">
-  <a href="https://github.com/itsdevcode/waybound/stargazers"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/stars.svg" alt="GitHub Stars" /></a>
+  <a href="https://github.com/itsdevcode/waybound/stargazers"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/stars.svg" alt="GitHub Stars" /></a>
   &nbsp;
-  <a href="https://github.com/itsdevcode/waybound/network/members"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/forks.svg" alt="GitHub Forks" /></a>
+  <a href="https://github.com/itsdevcode/waybound/network/members"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/forks.svg" alt="GitHub Forks" /></a>
   &nbsp;
-  <a href="https://github.com/itsdevcode/waybound/issues"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/issues.svg" alt="Open Issues" /></a>
+  <a href="https://github.com/itsdevcode/waybound/issues"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/issues.svg" alt="Open Issues" /></a>
   &nbsp;
-  <a href="https://github.com/itsdevcode/waybound/pulls"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/prs.svg" alt="PRs Welcome" /></a>
+  <a href="https://github.com/itsdevcode/waybound/pulls"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/prs.svg" alt="PRs Welcome" /></a>
   &nbsp;
-  <a href="./LICENSE"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/license.svg" alt="MIT License" /></a>
+  <a href="./LICENSE"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/license.svg" alt="MIT License" /></a>
 </p>
 
 <!-- Core Tech Stack -->
 <p align="center">
-  <a href="https://www.python.org/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/python.svg" alt="Python 3.12" /></a>
+  <a href="https://www.python.org/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/python.svg" alt="Python 3.12" /></a>
   &nbsp;
-  <a href="https://fastapi.tiangolo.com/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/fastapi.svg" alt="FastAPI" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/fastapi.svg" alt="FastAPI" /></a>
   &nbsp;
-  <a href="https://nextjs.org/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/nextjs.svg" alt="Next.js" /></a>
+  <a href="https://nextjs.org/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/nextjs.svg" alt="Next.js" /></a>
   &nbsp;
-  <a href="https://www.typescriptlang.org/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/typescript.svg" alt="TypeScript" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/typescript.svg" alt="TypeScript" /></a>
   &nbsp;
-  <a href="https://www.postgresql.org/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/postgresql.svg" alt="PostgreSQL" /></a>
+  <a href="https://www.postgresql.org/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/postgresql.svg" alt="PostgreSQL" /></a>
   &nbsp;
-  <a href="https://developers.google.com/maps"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/googlemaps.svg" alt="Google Maps Platform" /></a>
+  <a href="https://developers.google.com/maps"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/googlemaps.svg" alt="Google Maps Platform" /></a>
   &nbsp;
-  <a href="https://ai.google.dev/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/gemma.svg" alt="Google Gemma 2" /></a>
+  <a href="https://ai.google.dev/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/gemma.svg" alt="Google Gemma 2" /></a>
   &nbsp;
-  <a href="https://tailwindcss.com/"><img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/badges/tailwind.svg" alt="Tailwind CSS" /></a>
+  <a href="https://tailwindcss.com/"><img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/badges/tailwind.svg" alt="Tailwind CSS" /></a>
 </p>
 
 </div>
@@ -120,24 +120,24 @@ flowchart LR
   <tr>
     <td width="50%" align="center">
       <b>🗺️ Interactive Adventure Map &amp; Walking Routes</b><br /><br />
-      <img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/preview-map.svg" alt="Interactive Mystery Map with Walking Route" width="100%" />
+      <img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/preview-map.svg" alt="Interactive Mystery Map with Walking Route" width="100%" />
       <p align="left"><sub>Real Google Maps street layout, live GPS blue dot, question-mark clue waypoints, walking path polyline, and translucent mystery search zone.</sub></p>
     </td>
     <td width="50%" align="center">
       <b>📜 Progressive Clues &amp; Waypoint Revelation</b><br /><br />
-      <img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/preview-clues.svg" alt="Progressive Clue Cards and Waypoint Identification" width="100%" />
+      <img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/preview-clues.svg" alt="Progressive Clue Cards and Waypoint Identification" width="100%" />
       <p align="left"><sub>Progressive field transmissions revealing hints sequentially. Waypoints are exposed only when unlocked, while the destination stays strictly sealed.</sub></p>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
       <b>⚔️ Two-Player Cooperative Fellowship</b><br /><br />
-      <img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/preview-fellowship.svg" alt="Two-Player Cooperative Mystery Party" width="100%" />
+      <img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/preview-fellowship.svg" alt="Two-Player Cooperative Mystery Party" width="100%" />
       <p align="left"><sub>Real-time cooperative gameplay with complementary split clues (Fragment I &amp; II), privacy-preserving nicknames, and synchronized mutual completion.</sub></p>
     </td>
     <td width="50%" align="center">
       <b>📈 Explorer Progression &amp; Leveling</b><br /><br />
-      <img src="https://raw.githubusercontent.com/itsdevcode/waybound/main/docs/assets/preview-dashboard.svg" alt="Explorer Profile Dashboard and XP Progress" width="100%" />
+      <img src="https://cdn.jsdelivr.net/gh/itsdevcode/waybound@main/docs/assets/preview-dashboard.svg" alt="Explorer Profile Dashboard and XP Progress" width="100%" />
       <p align="left"><sub>Explorer archetype crests, Level progress bar with atomic XP awards, and expedition journal tracking distance, time, and discoveries.</sub></p>
     </td>
   </tr>
