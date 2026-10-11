@@ -14,9 +14,10 @@ from app.schemas.quest import (
     QuestVerificationResponse,
     QuestVerifyRequest,
 )
+from app.schemas.place import CitySuggestion
 from app.services.providers.factory import create_quest_provider
 from app.services.providers.gemma import GemmaProviderError
-from app.services.places import GooglePlacesError
+from app.services.places import GooglePlacesError, GooglePlacesService
 from app.services.quest import (
     QuestConflictError,
     QuestError,
@@ -175,6 +176,29 @@ async def get_nearby_quests(
         )
     except Exception as e:
         raise handle_service_error(e)
+
+
+@router.get(
+    "/nearby-cities",
+    response_model=list[CitySuggestion],
+    summary="Discover genuine nearby cities from user region",
+    description="Returns genuine cities and regional localities near explorer coordinates using Google Places / Geocoding provider.",
+)
+async def get_nearby_cities(
+    latitude: float = Query(..., ge=-90.0, le=90.0, description="Center latitude"),
+    longitude: float = Query(..., ge=-180.0, le=180.0, description="Center longitude"),
+    limit: int = Query(6, ge=1, le=10, description="Maximum number of cities to return"),
+) -> list[CitySuggestion]:
+    try:
+        places_service = GooglePlacesService()
+        return await places_service.discover_nearby_cities(
+            latitude=latitude,
+            longitude=longitude,
+            limit=limit,
+        )
+    except Exception as e:
+        logger.warning("Places provider error while discovering nearby cities: %s", type(e).__name__)
+        return []
 
 
 @router.post(

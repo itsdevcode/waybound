@@ -44,7 +44,6 @@ import {
   getGoogleMapsNavigationUrl,
 } from "@/lib/maps";
 import {
-  POPULAR_CITIES,
   getCurrentCoordinates,
 } from "@/lib/geo";
 import { getXpProgress, formatDate } from "@/lib/utils";
@@ -68,6 +67,7 @@ import {
   User,
   Radio,
   AlertTriangle,
+  RotateCw,
   X,
 } from "lucide-react";
 
@@ -142,6 +142,7 @@ export default function HomePage() {
   const [verifyModalOpen, setVerifyModalOpen] = useState<boolean>(false);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [completeResult, setCompleteResult] = useState<QuestVerificationResponse | null>(null);
+  const [pendingQuestPayload, setPendingQuestPayload] = useState<QuestCreateRequest | null>(null);
 
   // Acquire Browser GPS
   const acquireLocation = useCallback(async () => {
@@ -155,17 +156,10 @@ export default function HomePage() {
         isManual: false,
       });
       const addr = await reverseGeocodeCoordinates(coords.latitude, coords.longitude);
-      setAddressLabel(addr);
+      setAddressLabel(addr || "Verified GPS Location");
     } catch {
       if (!userLocation) {
-        const sf = POPULAR_CITIES[0];
-        setUserLocation({
-          latitude: sf.latitude,
-          longitude: sf.longitude,
-          accuracy: 0,
-          isManual: true,
-        });
-        setAddressLabel(`${sf.name}, ${sf.region} (Manual Selection)`);
+        setAddressLabel("GPS unavailable — Select city or retry");
       }
     } finally {
       setGeoLoading(false);
@@ -219,11 +213,11 @@ export default function HomePage() {
   const syncPartyData = useCallback(async () => {
     try {
       if (!getAuthToken()) {
-        try {
-          await api.auth.loginDemo();
-        } catch {
-          return;
-        }
+        setMyParties([]);
+        setParty(null);
+        setCoopQuest(null);
+        setViewingCoopQuest(false);
+        return;
       }
 
       const partiesList = await api.parties.listMine();
@@ -347,12 +341,32 @@ export default function HomePage() {
 
   // Solo Quest Actions
   async function handleGenerateQuest(payload: QuestCreateRequest) {
-    const lat = userLocation?.latitude ?? payload.latitude;
-    const lon = userLocation?.longitude ?? payload.longitude;
-    const generated = await api.generateQuest({ ...payload, latitude: lat, longitude: lon });
-    setActiveQuest(generated);
-    setSavedActiveQuestId(generated.id);
-    void refreshData(userId);
+    const lat = payload.latitude ?? userLocation?.latitude ?? null;
+    const lon = payload.longitude ?? userLocation?.longitude ?? null;
+    const finalPayload: QuestCreateRequest = { ...payload, latitude: lat, longitude: lon };
+
+    if (!getAuthToken()) {
+      setPendingQuestPayload(finalPayload);
+      setSetupModalOpen(false);
+      setAuthModalOpen(true);
+      return;
+    }
+
+    try {
+      const generated = await api.generateQuest(finalPayload);
+      setActiveQuest(generated);
+      setSavedActiveQuestId(generated.id);
+      setPendingQuestPayload(null);
+      void refreshData(userId);
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        setPendingQuestPayload(finalPayload);
+        setSetupModalOpen(false);
+        setAuthModalOpen(true);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function handleStartQuest(questId: string) {
@@ -848,12 +862,23 @@ export default function HomePage() {
               </span>
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowCityPicker(!showCityPicker)}
+                type="button"
+                onClick={() => void acquireLocation()}
+                disabled={geoLoading}
+                className="text-[10px] text-purple-300 hover:text-white flex items-center gap-1 font-semibold disabled:opacity-50"
+                title="Retry GPS"
+              >
+                <RotateCw className={`h-2.5 w-2.5 ${geoLoading ? "animate-spin" : ""}`} />
+                <span>Retry GPS</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSetupModalOpen(true)}
                 className="text-[10px] text-amber-300 hover:underline font-semibold"
               >
-                Change City
+                Change Location
               </button>
             </div>
           </div>
@@ -873,30 +898,6 @@ export default function HomePage() {
               <span className="font-mono">
                 {userLocation.latitude.toFixed(4)}, {userLocation.longitude.toFixed(4)}
               </span>
-            </div>
-          )}
-
-          {/* City Picker dropdown */}
-          {showCityPicker && (
-            <div className="pt-2 border-t border-purple-900/50 grid grid-cols-2 gap-1.5">
-              {POPULAR_CITIES.map((city) => (
-                <button
-                  key={city.name}
-                  onClick={() => {
-                    setUserLocation({
-                      latitude: city.latitude,
-                      longitude: city.longitude,
-                      accuracy: 0,
-                      isManual: true,
-                    });
-                    setAddressLabel(`${city.name}, ${city.region} (Manual Selection)`);
-                    setShowCityPicker(false);
-                  }}
-                  className="px-2 py-1 text-left rounded-lg bg-purple-950/60 hover:bg-purple-800/60 text-[10px] text-purple-200 border border-purple-800/40 transition"
-                >
-                  {city.name}
-                </button>
-              ))}
             </div>
           )}
         </div>
@@ -1223,6 +1224,13 @@ export default function HomePage() {
         isOpen={setupModalOpen}
         onClose={() => setSetupModalOpen(false)}
         onSubmit={handleGenerateQuest}
+        initialLocation={userLocation}
+        onRequireAuth={(pending) => {
+          setPendingQuestPayload(pending);
+          setSetupModalOpen(false);
+          setAuthModalOpen(true);
+        }}
+        pendingPayload={pendingQuestPayload}
       />
 
       {activeQuest && (
@@ -1256,6 +1264,12 @@ export default function HomePage() {
           }
           setSavedActiveQuestId(null);
           void refreshData(session.user_id);
+
+          if (pendingQuestPayload) {
+            const toResume = { ...pendingQuestPayload, user_id: session.user_id || userId };
+            setPendingQuestPayload(null);
+            void handleGenerateQuest(toResume);
+          }
         }}
         onLogout={() => {
           removeAuthToken();
@@ -1264,6 +1278,7 @@ export default function HomePage() {
           setActiveQuest(null);
           setCurrentUserEmail(null);
           setSavedActiveQuestId(null);
+          setPendingQuestPayload(null);
         }}
       />
     </div>

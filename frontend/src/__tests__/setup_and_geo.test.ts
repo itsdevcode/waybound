@@ -231,3 +231,64 @@ describe("City Presets & Manual Location Fallback", () => {
     expect(manualVerifyPayload.is_manual_location).toBe(true);
   });
 });
+
+describe("Dynamic Reverse Geocoding & Address Breakdown", () => {
+  it("extracts locality, city, district, state, country, and postal code from Google Geocoder results", async () => {
+    const { reverseGeocodeDetails } = await import("@/lib/maps");
+
+    const mockGeocoderResult = {
+      formatted_address: "123 Market St, San Francisco, CA 94105, USA",
+      address_components: [
+        { long_name: "123", short_name: "123", types: ["street_number"] },
+        { long_name: "Market Street", short_name: "Market St", types: ["route"] },
+        { long_name: "Financial District", short_name: "Financial District", types: ["neighborhood"] },
+        { long_name: "San Francisco", short_name: "SF", types: ["locality"] },
+        { long_name: "San Francisco County", short_name: "SF County", types: ["administrative_area_level_2"] },
+        { long_name: "California", short_name: "CA", types: ["administrative_area_level_1"] },
+        { long_name: "United States", short_name: "US", types: ["country"] },
+        { long_name: "94105", short_name: "94105", types: ["postal_code"] },
+      ],
+    };
+
+    // Mock google.maps.Geocoder on global window
+    (window as unknown as { google: unknown }).google = {
+      maps: {
+        Geocoder: class {
+          geocode(_req: unknown) {
+            return Promise.resolve({
+              results: [mockGeocoderResult],
+            });
+          }
+        },
+      },
+    };
+
+    const details = await reverseGeocodeDetails(37.7749, -122.4194);
+    expect(details.formattedAddress).toBe("123 Market St, San Francisco, CA 94105, USA");
+    expect(details.city).toBe("San Francisco");
+    expect(details.district).toBe("San Francisco County");
+    expect(details.state).toBe("California");
+    expect(details.country).toBe("United States");
+    expect(details.postalCode).toBe("94105");
+  });
+
+  it("handles geocoding failure gracefully without throwing unhandled exceptions", async () => {
+    const { reverseGeocodeDetails } = await import("@/lib/maps");
+
+    (window as unknown as { google: unknown }).google = {
+      maps: {
+        Geocoder: class {
+          geocode(_req: unknown) {
+            return Promise.reject(new Error("Geocoder service failed"));
+          }
+        },
+      },
+    };
+
+    const details = await reverseGeocodeDetails(0, 0);
+    expect(details.formattedAddress).toBe("0.0000°N, 0.0000°E");
+    expect(details.city).toBeUndefined();
+  });
+});
+
+

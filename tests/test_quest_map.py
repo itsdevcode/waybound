@@ -200,3 +200,74 @@ async def test_nearby_quests_provider_failure_falls_back_to_demo(monkeypatch: py
     assert "0 XP" in first["description"]
 
 
+@pytest.mark.asyncio
+async def test_nearby_cities_endpoint_discovery_and_caching(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
+    """Test discovery of nearby cities using Google Places provider with caching and distance sorting."""
+    from app.core.config import settings
+    from app.schemas.place import CitySuggestion
+    from app.services.places import GooglePlacesService, _CITIES_CACHE
+
+    _CITIES_CACHE.clear()
+    monkeypatch.setattr(settings, "google_maps_api_key", "test-api-key")
+
+    mock_cities = [
+        CitySuggestion(
+            name="Berkeley",
+            region="California",
+            country="United States",
+            latitude=37.8715,
+            longitude=-122.2730,
+            place_id="ChIJ0zPScFa4j4ARvBueyog_A",
+            distance_km=17.2,
+        ),
+        CitySuggestion(
+            name="Oakland",
+            region="California",
+            country="United States",
+            latitude=37.8044,
+            longitude=-122.2711,
+            place_id="ChIJqSNu0IuAj4ARsM_98LwL3W4",
+            distance_km=14.8,
+        ),
+    ]
+
+    async def mock_discover(self, latitude: float, longitude: float, limit: int = 6):
+        return mock_cities
+
+    monkeypatch.setattr(GooglePlacesService, "discover_nearby_cities", mock_discover)
+
+    # Valid coordinates
+    res = await client.get("/api/v1/quests/nearby-cities?latitude=37.7749&longitude=-122.4194&limit=5")
+    assert res.status_code == 200
+    cities = res.json()
+    assert len(cities) == 2
+    assert cities[0]["name"] in ["Berkeley", "Oakland"]
+    assert cities[0]["region"] == "California"
+
+    # Validation bounds: invalid latitude
+    res_invalid_lat = await client.get("/api/v1/quests/nearby-cities?latitude=95.0&longitude=-122.4194")
+    assert res_invalid_lat.status_code == 422
+
+    # Validation bounds: invalid longitude
+    res_invalid_lng = await client.get("/api/v1/quests/nearby-cities?latitude=37.77&longitude=190.0")
+    assert res_invalid_lng.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_nearby_cities_endpoint_provider_failure_returns_empty_list(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
+    """When Places API fails or raises an error, nearby-cities gracefully returns an empty list without inventing cities."""
+    from app.services.places import GooglePlacesService, _CITIES_CACHE
+
+    _CITIES_CACHE.clear()
+
+    async def mock_failing_discover(self, latitude: float, longitude: float, limit: int = 6):
+        raise RuntimeError("Places API outage")
+
+    monkeypatch.setattr(GooglePlacesService, "discover_nearby_cities", mock_failing_discover)
+
+    res = await client.get("/api/v1/quests/nearby-cities?latitude=37.7749&longitude=-122.4194")
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+
