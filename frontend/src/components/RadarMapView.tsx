@@ -179,7 +179,7 @@ export function RadarMapView({
                     ? "#f59e0b"
                     : isCompleted
                     ? "#3b82f6"
-                    : "#10b981"
+                    : "#9333ea"
                 }
                 fillOpacity={isSelected ? 0.35 : 0.2}
               />
@@ -194,9 +194,9 @@ export function RadarMapView({
                     ? "#fbbf24"
                     : isCompleted
                     ? "#60a5fa"
-                    : "#34d399"
+                    : "#c084fc"
                 }
-                stroke="#ffffff"
+                stroke={isSelected ? "#ffffff" : "#fbbf24"}
                 strokeWidth={isSelected ? 2 : 1.2}
               />
             </g>

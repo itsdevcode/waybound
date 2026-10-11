@@ -165,10 +165,23 @@ export function GoogleMapView({
 
     quests.forEach((quest) => {
       const isSelected = selectedQuest?.title === quest.title;
-      let markerColor = "#10b981"; // Emerald for available
-      if (quest.status === "active") markerColor = "#f59e0b"; // Amber for active
-      else if (quest.status === "completed") markerColor = "#3b82f6"; // Blue for completed
-      else if (quest.status === "locked") markerColor = "#64748b"; // Slate for locked
+      // Waybound Purple and Gold game color palette
+      let fillColor = "#9333ea"; // Purple for available
+      let strokeColor = "#fbbf24"; // Gold trim
+      if (quest.status === "active") {
+        fillColor = "#f59e0b"; // Glowing Amber/Gold for active quest
+        strokeColor = "#ffffff";
+      } else if (quest.status === "completed") {
+        fillColor = "#3b82f6"; // Sapphire/Blue for completed
+        strokeColor = "#93c5fd";
+      } else if (quest.status === "locked") {
+        fillColor = "#475569"; // Slate for locked
+        strokeColor = "#94a3b8";
+      }
+
+      if (isSelected) {
+        strokeColor = "#ffffff";
+      }
 
       const marker = new window.google.maps.Marker({
         position: { lat: quest.latitude, lng: quest.longitude },
@@ -176,13 +189,13 @@ export function GoogleMapView({
         title: quest.title,
         icon: {
           path: window.google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-          scale: isSelected ? 7 : 5.5,
-          fillColor: markerColor,
+          scale: isSelected ? 8 : 6,
+          fillColor,
           fillOpacity: 0.95,
-          strokeColor: isSelected ? "#ffffff" : "#1f1a36",
-          strokeWeight: isSelected ? 2.5 : 1.5,
+          strokeColor,
+          strokeWeight: isSelected ? 3 : 2,
         },
-        zIndex: quest.status === "active" ? 90 : isSelected ? 80 : 50,
+        zIndex: quest.status === "active" ? 95 : isSelected ? 90 : 50,
       });
 
       marker.addListener("click", () => {

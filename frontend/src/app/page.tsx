@@ -1,9 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { Header } from "@/components/Header";
-import { ProfileCard } from "@/components/ProfileCard";
-import { QuestHistoryCard } from "@/components/QuestHistoryCard";
 import { QuestSetupModal } from "@/components/QuestSetupModal";
 import { ActiveQuestView } from "@/components/ActiveQuestView";
 import { QuestVerifyModal } from "@/components/QuestVerifyModal";
@@ -11,6 +9,8 @@ import { QuestCompleteModal } from "@/components/QuestCompleteModal";
 import { AuthModal } from "@/components/AuthModal";
 import { PartyLobbyView } from "@/components/PartyLobbyView";
 import { CoopQuestView } from "@/components/CoopQuestView";
+import { GoogleMapView } from "@/components/GoogleMapView";
+import { RadarMapView } from "@/components/RadarMapView";
 import {
   api,
   ApiError,
@@ -27,6 +27,7 @@ import type {
   QuestResponse,
   QuestVerificationResponse,
   QuestVerifyRequest,
+  NearbyQuestItem,
 } from "@/types/api";
 import type {
   PartyResponse,
@@ -36,17 +37,50 @@ import type {
   SharedPartyQuestResponse,
   PartyVerificationResponse,
 } from "@/types/party";
-import { ExploreMapModal } from "@/components/ExploreMapModal";
 import {
-  AlertTriangle,
-  RefreshCw,
+  useGoogleMaps,
+  reverseGeocodeCoordinates,
+  estimateWalkingMinutes,
+  getGoogleMapsNavigationUrl,
+} from "@/lib/maps";
+import {
+  POPULAR_CITIES,
+  getCurrentCoordinates,
+} from "@/lib/geo";
+import { getXpProgress, formatDate } from "@/lib/utils";
+import {
   Compass,
-  AlertCircle,
   Users,
-  Map,
+  Search,
+  Sparkles,
+  Trophy,
+  Navigation,
+  Crosshair,
+  ExternalLink,
+  Shield,
+  Clock,
+  MapPin,
+  Play,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  Map as MapIcon,
+  User,
+  Radio,
+  AlertTriangle,
+  X,
 } from "lucide-react";
 
+const RADIUS_OPTIONS = [
+  { label: "500m", value: 500 },
+  { label: "1 km", value: 1000 },
+  { label: "2 km", value: 2000 },
+  { label: "5 km", value: 5000 },
+];
+
 export default function HomePage() {
+  const { isReady: isGoogleMapsReady } = useGoogleMaps();
+
   const [userId, setUserId] = useState<string>(() => {
     if (typeof window !== "undefined") {
       return getActiveUserId();
@@ -55,39 +89,133 @@ export default function HomePage() {
   });
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-  // Mode: Solo Expedition vs Mystery Fellowship (2-Player)
+  // Tabs: "solo" vs "coop"
   const [mode, setMode] = useState<"solo" | "coop">("solo");
 
-  // Solo State
+  // Mobile Bottom Nav Tab
+  const [mobileTab, setMobileTab] = useState<"map" | "quests" | "partners" | "profile">("map");
+  const [mobileSheetOpen, setMobileSheetOpen] = useState<boolean>(false);
+
+  // Profile & Quests State
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [quests, setQuests] = useState<QuestResponse[]>([]);
   const [activeQuest, setActiveQuest] = useState<QuestResponse | null>(null);
 
-  // Cooperative / Party State
+  // Party State
   const [party, setParty] = useState<PartyResponse | null>(null);
   const [myParties, setMyParties] = useState<PartyResponse[]>([]);
   const [coopQuest, setCoopQuest] = useState<SharedPartyQuestResponse | null>(null);
   const [viewingCoopQuest, setViewingCoopQuest] = useState<boolean>(false);
 
-  // Loading and fine-grained error states
+  // Loading & Connection
   const [loading, setLoading] = useState<boolean>(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [questsError, setQuestsError] = useState<string | null>(null);
+
+  // Location State
+  const [userLocation, setUserLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    isManual: boolean;
+  } | null>(null);
+  const [addressLabel, setAddressLabel] = useState<string>("Locating explorer...");
+  const [geoLoading, setGeoLoading] = useState<boolean>(false);
+  const [showCityPicker, setShowCityPicker] = useState<boolean>(false);
+
+  // Map Controls State
+  const [radiusMeters, setRadiusMeters] = useState<number>(1000);
+  const [nearbyQuests, setNearbyQuests] = useState<NearbyQuestItem[]>([]);
+  const [loadingNearby, setLoadingNearby] = useState<boolean>(false);
+  const [selectedQuestItem, setSelectedQuestItem] = useState<NearbyQuestItem | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{
+    distanceText: string;
+    durationText: string;
+    durationMinutes: number;
+  } | null>(null);
+
+  // Search & Filter state for quests list
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [difficultyFilter, setDifficultyFilter] = useState<string>("all");
 
   // Modals
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState<boolean>(false);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
-  const [mapModalOpen, setMapModalOpen] = useState<boolean>(false);
   const [completeResult, setCompleteResult] = useState<QuestVerificationResponse | null>(null);
 
-  // Ref to track active party for polling without stale closure
-  const activePartyIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    activePartyIdRef.current = party?.id || null;
-  }, [party]);
+  // Acquire Browser GPS
+  const acquireLocation = useCallback(async () => {
+    setGeoLoading(true);
+    try {
+      const coords = await getCurrentCoordinates();
+      setUserLocation({
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: coords.accuracy,
+        isManual: false,
+      });
+      const addr = await reverseGeocodeCoordinates(coords.latitude, coords.longitude);
+      setAddressLabel(addr);
+    } catch {
+      if (!userLocation) {
+        const sf = POPULAR_CITIES[0];
+        setUserLocation({
+          latitude: sf.latitude,
+          longitude: sf.longitude,
+          accuracy: 0,
+          isManual: true,
+        });
+        setAddressLabel(`${sf.name}, ${sf.region} (Manual Selection)`);
+      }
+    } finally {
+      setGeoLoading(false);
+    }
+  }, [userLocation]);
 
-  // Ensure authenticated session and refresh parties
+  // Initial Location
+  useEffect(() => {
+    if (userLocation) return;
+    const timer = setTimeout(() => {
+      void acquireLocation();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [userLocation, acquireLocation]);
+
+  // Fetch Nearby Quests on location or radius change
+  const fetchNearby = useCallback(async () => {
+    if (!userLocation) return;
+    setLoadingNearby(true);
+    try {
+      const res = await api.getNearbyQuests(
+        userLocation.latitude,
+        userLocation.longitude,
+        radiusMeters
+      );
+      setNearbyQuests(res.items);
+
+      // Default selection to active quest if present, else nearest available
+      const activeItem = res.items.find((item) => item.status === "active");
+      if (activeItem) {
+        setSelectedQuestItem(activeItem);
+      } else if (res.items.length > 0 && !selectedQuestItem) {
+        setSelectedQuestItem(res.items[0]);
+      }
+    } catch (err) {
+      console.warn("Could not load nearby quests:", err);
+    } finally {
+      setLoadingNearby(false);
+    }
+  }, [userLocation, radiusMeters, selectedQuestItem]);
+
+  useEffect(() => {
+    if (!userLocation) return;
+    const timer = setTimeout(() => {
+      void fetchNearby();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [userLocation, radiusMeters, fetchNearby]);
+
+  // Sync Party data
   const syncPartyData = useCallback(async () => {
     try {
       if (!getAuthToken()) {
@@ -124,18 +252,16 @@ export default function HomePage() {
         setViewingCoopQuest(false);
       }
     } catch {
-      // Silently handle if party service is not initialized yet
+      // Ignore background sync errors
     }
   }, []);
 
-  // Manual refresh callback
+  // Refresh data callback
   const refreshData = useCallback(async (targetUserId?: string) => {
     setLoading(true);
     setConnectionError(null);
-    setQuestsError(null);
 
     try {
-      // Check if authenticated
       const token = getAuthToken();
       let profilePromise: Promise<ProfileResponse>;
       let questsPromise: Promise<QuestResponse[]>;
@@ -154,9 +280,6 @@ export default function HomePage() {
         questsPromise,
       ]);
 
-      let isConnError = false;
-
-      // Handle Profile Result
       if (profileRes.status === "fulfilled") {
         setProfile(profileRes.value);
         if (profileRes.value.user_id) {
@@ -166,195 +289,67 @@ export default function HomePage() {
       } else {
         const err = profileRes.reason;
         if (err instanceof ApiError && (err.status === 404 || err.status === 401)) {
-          // Unauthenticated or profile not created yet - show clean onboarding
           setProfile(null);
         } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
-          isConnError = true;
-          setConnectionError(
-            err.message || "Failed to connect to WAYBOUND backend server (http://localhost:8000)."
-          );
-        } else {
-          setProfile(null);
+          setConnectionError(err.message || "Cannot connect to WAYBOUND backend.");
         }
       }
 
-      // Handle Quests Result
       if (questsRes.status === "fulfilled") {
         const sorted = [...questsRes.value].sort(
           (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
         setQuests(sorted);
-        setQuestsError(null);
-
-        // Synchronize active quest without mutating its state
-        setActiveQuest((prev) => {
-          if (!prev) return null;
-          return sorted.find((q) => q.id === prev.id) || prev;
-        });
-      } else {
-        const err = questsRes.reason;
-        if (err instanceof ApiError && (err.status === 404 || err.status === 401)) {
-          setQuests([]);
-        } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
-          if (!isConnError) {
-            setQuestsError("Could not load quest history from the server. Your explorer profile was preserved.");
-          }
-        } else {
-          setQuestsError("Failed to fetch quest history.");
-        }
+        setActiveQuest((prev) => (prev ? sorted.find((q) => q.id === prev.id) || prev : null));
       }
 
-      // Sync party state
       await syncPartyData();
+      await fetchNearby();
     } catch (err: unknown) {
-      setConnectionError((err as Error)?.message || "Unexpected error communicating with backend.");
+      setConnectionError((err as Error)?.message || "Network error");
     } finally {
       setLoading(false);
     }
-  }, [userId, syncPartyData]);
+  }, [userId, syncPartyData, fetchNearby]);
 
-  // Initial fetch on mount & identity change
+  // Initial mount load
   useEffect(() => {
     let isMounted = true;
-
-    async function fetchInitial() {
+    async function init() {
       try {
         const token = getAuthToken();
-        let profilePromise: Promise<ProfileResponse>;
-        let questsPromise: Promise<QuestResponse[]>;
-
         if (token) {
-          // Also fetch explorer email
           try {
             const me = await api.auth.getMe();
-            if (isMounted && me?.email) {
-              setCurrentUserEmail(me.email);
+            if (isMounted && me?.email) setCurrentUserEmail(me.email);
+          } catch {}
+        }
+        await refreshData();
+
+        const savedId = getSavedActiveQuestId();
+        if (savedId && isMounted) {
+          try {
+            const q = await api.getQuest(savedId);
+            if (q.status === "draft" || q.status === "active") {
+              setActiveQuest(q);
             }
-          } catch {
-            // Ignore if me check fails
-          }
-          profilePromise = api.getMyProfile();
-          questsPromise = api.getMyQuests();
-        } else {
-          const currentId = userId || getActiveUserId();
-          profilePromise = api.getProfile(currentId);
-          questsPromise = api.getUserQuests(currentId);
-        }
-
-        const [profileRes, questsRes] = await Promise.allSettled([
-          profilePromise,
-          questsPromise,
-        ]);
-
-        if (!isMounted) return;
-
-        let isConnError = false;
-
-        // 1. Process profile
-        if (profileRes.status === "fulfilled") {
-          setProfile(profileRes.value);
-          if (profileRes.value.user_id) {
-            setUserId(profileRes.value.user_id);
-            setActiveUserId(profileRes.value.user_id);
-          }
-        } else {
-          const err = profileRes.reason;
-          if (err instanceof ApiError && (err.status === 404 || err.status === 401)) {
-            setProfile(null);
-          } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
-            isConnError = true;
-            setConnectionError(
-              err.message || "Failed to connect to WAYBOUND backend server (http://localhost:8000)."
-            );
-          } else {
-            setProfile(null);
-          }
-        }
-
-        // 2. Process quests
-        let loadedQuests: QuestResponse[] = [];
-        if (questsRes.status === "fulfilled") {
-          loadedQuests = [...questsRes.value].sort(
-            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          );
-          setQuests(loadedQuests);
-          setQuestsError(null);
-        } else {
-          const err = questsRes.reason;
-          if (err instanceof ApiError && err.status === 404) {
-            setQuests([]);
-          } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
-            if (!isConnError) {
-              setQuestsError("Could not load quest history from server. Explorer profile was preserved.");
-            }
-          }
-        }
-
-        // 3. Restore draft/active solo quest on refresh
-        const savedQuestId = getSavedActiveQuestId();
-        if (savedQuestId) {
-          const existingInList = loadedQuests.find((q) => q.id === savedQuestId);
-          if (existingInList && (existingInList.status === "draft" || existingInList.status === "active")) {
-            setActiveQuest(existingInList);
-          } else {
-            try {
-              const freshQuest = await api.getQuest(savedQuestId);
-              if (isMounted && (freshQuest.status === "draft" || freshQuest.status === "active")) {
-                setActiveQuest(freshQuest);
-              }
-            } catch {
-              setSavedActiveQuestId(null);
-            }
-          }
-        }
-
-        // 4. Sync party data
-        await syncPartyData();
-      } catch (err: unknown) {
-        if (isMounted) {
-          setConnectionError((err as Error)?.message || "Failed to communicate with backend.");
+          } catch {}
         }
       } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+        if (isMounted) setLoading(false);
       }
     }
-
-    void fetchInitial();
-
+    void init();
     return () => {
       isMounted = false;
     };
-  }, [userId, syncPartyData]);
+  }, [refreshData]);
 
-  // Periodic polling for party mode (every 4 seconds) to detect partner joining/verifying
-  useEffect(() => {
-    if (mode !== "coop" || !party) return;
-
-    const intervalId = setInterval(async () => {
-      try {
-        const partyId = activePartyIdRef.current;
-        if (!partyId) return;
-
-        const updatedParty = await api.parties.get(partyId);
-        setParty(updatedParty);
-
-        if (updatedParty.has_active_quest) {
-          const sharedQ = await api.parties.getSharedQuest(partyId);
-          setCoopQuest(sharedQ);
-        }
-      } catch {
-        // Ignore background polling glitches
-      }
-    }, 4000);
-
-    return () => clearInterval(intervalId);
-  }, [mode, party]);
-
-  // Solo quest handlers
+  // Solo Quest Actions
   async function handleGenerateQuest(payload: QuestCreateRequest) {
-    const generated = await api.generateQuest(payload);
+    const lat = userLocation?.latitude ?? payload.latitude;
+    const lon = userLocation?.longitude ?? payload.longitude;
+    const generated = await api.generateQuest({ ...payload, latitude: lat, longitude: lon });
     setActiveQuest(generated);
     setSavedActiveQuestId(generated.id);
     void refreshData(userId);
@@ -390,32 +385,19 @@ export default function HomePage() {
     void refreshData(userId);
   }
 
-  function handleSelectQuestFromJournal(q: QuestResponse) {
-    setActiveQuest(q);
-    if (q.status === "draft" || q.status === "active") {
-      setSavedActiveQuestId(q.id);
-    } else {
-      setSavedActiveQuestId(null);
-    }
-  }
-
   // Party handlers
   async function handleCreateParty(payload: PartyCreateRequest) {
-    const newParty = await api.parties.create(payload);
-    setParty(newParty);
-    setCoopQuest(null);
-    setViewingCoopQuest(false);
+    const p = await api.parties.create(payload);
+    setParty(p);
     void syncPartyData();
-    return newParty;
+    return p;
   }
 
   async function handleJoinParty(payload: PartyJoinRequest) {
-    const joined = await api.parties.join(payload);
-    setParty(joined);
-    setCoopQuest(null);
-    setViewingCoopQuest(false);
+    const p = await api.parties.join(payload);
+    setParty(p);
     void syncPartyData();
-    return joined;
+    return p;
   }
 
   async function handleLeaveParty(partyId: string) {
@@ -462,221 +444,780 @@ export default function HomePage() {
       longitude: coords.longitude,
       observation_answer: answer,
     });
-    // refresh party quest
     const updated = await api.parties.getSharedQuest(partyId);
     setCoopQuest(updated);
     void refreshData(userId);
     return res;
   }
 
+  // Filtered Nearby Quests
+  const filteredNearbyQuests = useMemo(() => {
+    return nearbyQuests.filter((item) => {
+      const matchesSearch =
+        searchQuery.trim() === "" ||
+        item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesDiff =
+        difficultyFilter === "all" ||
+        item.difficulty.toLowerCase() === difficultyFilter.toLowerCase();
+      return matchesSearch && matchesDiff;
+    });
+  }, [nearbyQuests, searchQuery, difficultyFilter]);
+
+  const mapCenter = userLocation
+    ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
+    : { latitude: 37.7749, longitude: -122.4194 };
+
+  const xpProgress = profile ? getXpProgress(profile.xp) : null;
   const isHost = party ? party.host_id === userId : false;
 
+  // Render Left Panel Content
+  const renderLeftPanel = () => (
+    <div className="h-full flex flex-col space-y-4 pr-1 overflow-y-auto">
+      {/* 1. Mode Tabs (Solo Expedition vs Mystery Fellowship) */}
+      <div className="flex rounded-xl bg-purple-950/70 p-1 border border-purple-900/60 text-xs shadow-md shrink-0">
+        <button
+          onClick={() => setMode("solo")}
+          className={`flex-1 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+            mode === "solo"
+              ? "bg-gradient-to-r from-purple-800 to-purple-900 text-amber-300 shadow border border-purple-700/60"
+              : "text-purple-400 hover:text-purple-200"
+          }`}
+        >
+          <Compass className="h-3.5 w-3.5 text-amber-400" />
+          <span>Solo Expedition</span>
+        </button>
+        <button
+          onClick={() => setMode("coop")}
+          className={`flex-1 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+            mode === "coop"
+              ? "bg-gradient-to-r from-purple-800 to-purple-900 text-amber-300 shadow border border-purple-700/60"
+              : "text-purple-400 hover:text-purple-200"
+          }`}
+        >
+          <Users className="h-3.5 w-3.5 text-amber-400" />
+          <span>Mystery Fellowship</span>
+        </button>
+      </div>
+
+      {mode === "coop" ? (
+        viewingCoopQuest && coopQuest && party ? (
+          <CoopQuestView
+            partyId={party.id}
+            quest={coopQuest}
+            onBack={() => setViewingCoopQuest(false)}
+            onRefresh={async () => {
+              if (!party) return;
+              const freshParty = await api.parties.get(party.id);
+              setParty(freshParty);
+              if (freshParty.has_active_quest) {
+                const freshQuest = await api.parties.getSharedQuest(party.id);
+                setCoopQuest(freshQuest);
+              }
+            }}
+            onUnlockClue={handleUnlockPartyClue}
+            onVerifyArrival={handleVerifyPartyArrival}
+            onLeaveParty={handleLeaveParty}
+            onDisbandParty={handleDisbandParty}
+            isHost={isHost}
+          />
+        ) : (
+          <PartyLobbyView
+            currentUserId={userId}
+            party={party}
+            onRefreshParty={async () => {
+              if (!party) return;
+              const fresh = await api.parties.get(party.id);
+              setParty(fresh);
+              if (fresh.has_active_quest) {
+                const freshQ = await api.parties.getSharedQuest(fresh.id);
+                setCoopQuest(freshQ);
+              }
+            }}
+            onCreateParty={handleCreateParty}
+            onJoinParty={handleJoinParty}
+            onLeaveParty={handleLeaveParty}
+            onDisbandParty={handleDisbandParty}
+            onSetConsent={handleSetConsent}
+            onStartQuest={handleStartPartyQuest}
+            onOpenQuest={() => setViewingCoopQuest(true)}
+            myParties={myParties}
+            onSelectParty={async (pId) => {
+              const selected = await api.parties.get(pId);
+              setParty(selected);
+              if (selected.has_active_quest) {
+                const q = await api.parties.getSharedQuest(pId);
+                setCoopQuest(q);
+                setViewingCoopQuest(true);
+              }
+            }}
+          />
+        )
+      ) : activeQuest ? (
+        /* Active Solo Quest View */
+        <ActiveQuestView
+          quest={activeQuest}
+          onBack={() => {
+            setActiveQuest(null);
+            setSavedActiveQuestId(null);
+          }}
+          onStartQuest={handleStartQuest}
+          onUnlockHint={handleUnlockHint}
+          onOpenVerify={() => setVerifyModalOpen(true)}
+          onAbandonQuest={handleAbandonQuest}
+        />
+      ) : (
+        /* Normal Solo Dashboard List */
+        <div className="space-y-4">
+          {/* 2. Compact Explorer Profile Card */}
+          <div className="rounded-2xl border border-purple-800/40 bg-gradient-to-br from-[#15102a] via-[#100d22] to-[#1a1236] p-4 shadow-xl relative overflow-hidden">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="relative flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-500 via-purple-600 to-indigo-600 shadow-md ring-2 ring-amber-400/30">
+                  <span className="font-extrabold text-white text-base">
+                    {profile?.level ?? 1}
+                  </span>
+                  <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-[#090812]">
+                    <Trophy className="h-2.5 w-2.5" />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-white text-sm">
+                      {profile ? `Explorer Level ${profile.level}` : "Cadet Explorer"}
+                    </span>
+                    <span className="rounded px-1.5 py-0.2 bg-purple-900/60 text-[10px] text-amber-300 font-bold border border-purple-700/50 uppercase">
+                      {profile?.explorer_type || "Mystery"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-purple-300/70 font-medium">
+                    {profile ? `${profile.xp} Lifetime XP` : "Sign in to persist your journey"}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="text-xs px-2.5 py-1 rounded-lg bg-purple-900/40 hover:bg-purple-800/50 text-purple-200 border border-purple-700/40 transition cursor-pointer font-medium"
+              >
+                {profile ? "Profile" : "Sign In"}
+              </button>
+            </div>
+
+            {/* XP Progress Bar */}
+            <div className="mt-3 space-y-1">
+              <div className="flex justify-between text-[11px] font-medium text-purple-300/80">
+                <span>Next Tier</span>
+                <span className="font-mono text-amber-300">
+                  {xpProgress ? `${xpProgress.currentTierXp} / 500 XP (${xpProgress.progressPercent}%)` : "0 / 500 XP"}
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-purple-950/80 overflow-hidden border border-purple-800/40">
+                <div
+                  className="h-full bg-gradient-to-r from-purple-500 via-amber-400 to-amber-300 rounded-full transition-all duration-500"
+                  style={{ width: `${xpProgress?.progressPercent ?? 0}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Prominent 'Begin Adventure' Golden Button */}
+          <button
+            onClick={() => setSetupModalOpen(true)}
+            className="w-full relative group overflow-hidden rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 p-[1px] shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all cursor-pointer"
+          >
+            <div className="flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-[#20150a] via-[#1a1005] to-[#20150a] px-5 py-3.5 transition group-hover:bg-opacity-90">
+              <Sparkles className="h-5 w-5 text-amber-400 animate-pulse" />
+              <span className="font-extrabold tracking-wider text-amber-200 group-hover:text-amber-100 text-sm uppercase">
+                Begin Adventure
+              </span>
+              <ChevronRight className="h-4 w-4 text-amber-400 transition-transform group-hover:translate-x-1" />
+            </div>
+          </button>
+
+          {/* 4. Search and Filter Bar */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-purple-400/60" />
+                <input
+                  type="text"
+                  placeholder="Search nearby mysteries..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-100 placeholder-purple-400/50 focus:outline-none focus:border-purple-600 transition"
+                />
+              </div>
+              <select
+                value={difficultyFilter}
+                onChange={(e) => setDifficultyFilter(e.target.value)}
+                className="px-2.5 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200 focus:outline-none focus:border-purple-600"
+              >
+                <option value="all">All Difficulties</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+          </div>
+
+          {/* 5. Nearby Quest Cards */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-purple-200">
+              <span className="flex items-center gap-1.5">
+                <Radio className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                Nearby Mysteries ({filteredNearbyQuests.length})
+              </span>
+              {loadingNearby && <span className="text-[11px] text-amber-400 animate-pulse">Scanning...</span>}
+            </div>
+
+            {filteredNearbyQuests.length === 0 ? (
+              <div className="rounded-2xl border border-purple-900/40 bg-purple-950/20 p-6 text-center space-y-2">
+                <Compass className="h-8 w-8 text-purple-400/40 mx-auto" />
+                <p className="text-xs text-purple-300 font-semibold">No Quests in Current Radius</p>
+                <p className="text-[11px] text-purple-400/60">
+                  Expand your exploration radius or change your search filter to uncover hidden secrets.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredNearbyQuests.map((item, idx) => {
+                  const isSelected = selectedQuestItem?.title === item.title;
+                  const isActive = item.status === "active";
+                  const isCompleted = item.status === "completed";
+
+                  return (
+                    <div
+                      key={item.id || `${item.title}-${idx}`}
+                      onClick={() => setSelectedQuestItem(item)}
+                      className={`rounded-xl p-3 border transition cursor-pointer text-left relative overflow-hidden group ${
+                        isSelected
+                          ? "bg-gradient-to-r from-purple-900/60 via-[#1b143a] to-indigo-950/60 border-amber-500/70 shadow-md shadow-purple-950/50"
+                          : "bg-purple-950/30 border-purple-900/40 hover:bg-purple-900/30 hover:border-purple-700/50"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="font-bold text-xs text-white group-hover:text-amber-200 transition">
+                              {item.title}
+                            </h4>
+                            {item.is_simulated && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                                Demo POI
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-purple-300/70 line-clamp-2">
+                            {item.description}
+                          </p>
+                        </div>
+
+                        {/* Status Badge */}
+                        <span
+                          className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                            isActive
+                              ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse"
+                              : isCompleted
+                              ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                              : "bg-purple-900/40 text-purple-300 border-purple-700/40"
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                      </div>
+
+                      {/* Quest Meta Chips */}
+                      <div className="mt-2.5 flex items-center justify-between text-[11px] text-purple-300/60 border-t border-purple-900/30 pt-2">
+                        <div className="flex items-center gap-3">
+                          <span className="capitalize text-amber-300/80 font-medium">
+                            {item.difficulty}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {item.estimated_minutes}m
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />
+                            {item.distance_meters > 1000
+                              ? `${(item.distance_meters / 1000).toFixed(1)}km`
+                              : `${Math.round(item.distance_meters)}m`}
+                          </span>
+                        </div>
+                        <span className="font-bold text-amber-400">
+                          +{item.reward_xp} XP
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 6. Quest Journal / Recent History Section */}
+          {quests.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-purple-900/40">
+              <h4 className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                <Trophy className="h-3.5 w-3.5 text-amber-400" />
+                Quest Journal ({quests.length})
+              </h4>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {quests.slice(0, 5).map((q) => (
+                  <div
+                    key={q.id}
+                    onClick={() => {
+                      setActiveQuest(q);
+                      if (q.status === "draft" || q.status === "active") {
+                        setSavedActiveQuestId(q.id);
+                      }
+                    }}
+                    className="flex items-center justify-between p-2 rounded-lg bg-purple-950/20 border border-purple-900/30 hover:bg-purple-900/30 transition cursor-pointer text-xs"
+                  >
+                    <div className="space-y-0.5 truncate pr-2">
+                      <p className="font-semibold text-purple-200 truncate">{q.title}</p>
+                      <p className="text-[10px] text-purple-400/60">{formatDate(q.created_at)}</p>
+                    </div>
+                    <span
+                      className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        q.status === "completed"
+                          ? "text-emerald-400 bg-emerald-950/50"
+                          : q.status === "active"
+                          ? "text-amber-400 bg-amber-950/50"
+                          : "text-purple-400"
+                      }`}
+                    >
+                      {q.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  // Render Right Panel (Interactive Map)
+  const renderRightPanel = () => (
+    <div className="h-full w-full relative rounded-2xl overflow-hidden border border-purple-900/40 shadow-2xl bg-[#090715]">
+      {/* 1. Underlying Map Component */}
+      {isGoogleMapsReady ? (
+        <GoogleMapView
+          center={mapCenter}
+          userLocation={userLocation}
+          radiusMeters={radiusMeters}
+          quests={nearbyQuests}
+          selectedQuest={selectedQuestItem}
+          onSelectQuest={(item) => setSelectedQuestItem(item)}
+          activeQuestGeofenceMeters={selectedQuestItem?.verification_radius_meters ?? 100}
+          onRouteCalculated={(info) => setRouteInfo(info)}
+        />
+      ) : (
+        <RadarMapView
+          center={mapCenter}
+          userLocation={userLocation}
+          radiusMeters={radiusMeters}
+          quests={nearbyQuests}
+          selectedQuest={selectedQuestItem}
+          onSelectQuest={(item) => setSelectedQuestItem(item)}
+          activeQuestGeofenceMeters={selectedQuestItem?.verification_radius_meters ?? 100}
+        />
+      )}
+
+      {/* 2. Floating Top Header Card: Current Location & GPS Accuracy */}
+      <div className="absolute top-3 left-3 right-3 sm:right-auto sm:max-w-md z-20">
+        <div className="rounded-2xl border border-purple-800/50 bg-[#090814]/90 backdrop-blur-md p-3 shadow-xl space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span
+                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    userLocation?.isManual ? "bg-amber-400" : "bg-emerald-400"
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                    userLocation?.isManual ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                />
+              </span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-purple-200">
+                {userLocation?.isManual ? "Simulated Coordinates" : "Physical GPS Locked"}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setShowCityPicker(!showCityPicker)}
+                className="text-[10px] text-amber-300 hover:underline font-semibold"
+              >
+                Change City
+              </button>
+            </div>
+          </div>
+
+          <p className="text-xs font-semibold text-white truncate flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            <span className="truncate">{addressLabel}</span>
+          </p>
+
+          {userLocation && (
+            <div className="flex items-center justify-between text-[10px] text-purple-300/70 border-t border-purple-900/40 pt-1">
+              <span>
+                {userLocation.isManual
+                  ? "0 XP Earnable (Manual Selection)"
+                  : `GPS Accuracy: ±${Math.round(userLocation.accuracy)}m`}
+              </span>
+              <span className="font-mono">
+                {userLocation.latitude.toFixed(4)}, {userLocation.longitude.toFixed(4)}
+              </span>
+            </div>
+          )}
+
+          {/* City Picker dropdown */}
+          {showCityPicker && (
+            <div className="pt-2 border-t border-purple-900/50 grid grid-cols-2 gap-1.5">
+              {POPULAR_CITIES.map((city) => (
+                <button
+                  key={city.name}
+                  onClick={() => {
+                    setUserLocation({
+                      latitude: city.latitude,
+                      longitude: city.longitude,
+                      accuracy: 0,
+                      isManual: true,
+                    });
+                    setAddressLabel(`${city.name}, ${city.region} (Manual Selection)`);
+                    setShowCityPicker(false);
+                  }}
+                  className="px-2 py-1 text-left rounded-lg bg-purple-950/60 hover:bg-purple-800/60 text-[10px] text-purple-200 border border-purple-800/40 transition"
+                >
+                  {city.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. Floating Map Controls: Radius selector & Recenter */}
+      <div className="absolute top-3 right-3 z-20 flex flex-col items-end gap-2">
+        {/* Radius Pills */}
+        <div className="flex rounded-xl bg-[#090814]/90 backdrop-blur-md p-1 border border-purple-800/50 shadow-xl text-[11px] font-bold">
+          {RADIUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setRadiusMeters(opt.value)}
+              className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                radiusMeters === opt.value
+                  ? "bg-gradient-to-r from-purple-700 to-amber-600 text-white shadow"
+                  : "text-purple-300/80 hover:text-white"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Recenter GPS Button */}
+        <button
+          onClick={() => void acquireLocation()}
+          disabled={geoLoading}
+          title="Recenter on Explorer Location"
+          className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#090814]/90 backdrop-blur-md border border-purple-800/50 text-amber-400 hover:text-white hover:border-amber-400 transition shadow-xl cursor-pointer"
+        >
+          <Crosshair className={`h-4 w-4 ${geoLoading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {/* 4. Floating Bottom Quest Preview Card (When quest is selected) */}
+      {selectedQuestItem && (
+        <div className="absolute bottom-3 left-3 right-3 sm:left-6 sm:right-6 z-20 animate-in slide-in-from-bottom duration-200">
+          <div className="rounded-2xl border border-purple-700/60 bg-[#090814]/95 backdrop-blur-md p-4 shadow-2xl space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-extrabold text-white text-sm">
+                    {selectedQuestItem.title}
+                  </h3>
+                  {selectedQuestItem.is_simulated ? (
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                      Demo POI (0 XP)
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                      Verified Landmark
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-purple-200/80 leading-relaxed">
+                  {selectedQuestItem.description}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setSelectedQuestItem(null)}
+                className="text-purple-400 hover:text-white transition p-1"
+                aria-label="Close quest preview"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Geofence and Route ETA info */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] border-t border-purple-900/40 pt-2 text-purple-200/80">
+              <div className="flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-amber-400" />
+                <span>Geofence: {selectedQuestItem.verification_radius_meters}m</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Navigation className="h-3.5 w-3.5 text-purple-400" />
+                <span>
+                  {routeInfo
+                    ? `${routeInfo.durationText} (${routeInfo.distanceText})`
+                    : `~${estimateWalkingMinutes(selectedQuestItem.distance_meters)} min`}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-blue-400" />
+                <span>{selectedQuestItem.estimated_minutes} min quest</span>
+              </div>
+              <div className="flex items-center gap-1.5 font-bold text-amber-400">
+                <Trophy className="h-3.5 w-3.5" />
+                <span>+{selectedQuestItem.reward_xp} XP</span>
+              </div>
+            </div>
+
+            {/* Actions: Start Quest & External Directions */}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <a
+                href={getGoogleMapsNavigationUrl(
+                  selectedQuestItem.latitude,
+                  selectedQuestItem.longitude,
+                  userLocation?.latitude,
+                  userLocation?.longitude
+                )}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-semibold text-purple-300 hover:text-white flex items-center gap-1"
+              >
+                <span>Google Maps Route</span>
+                <ExternalLink className="h-3 w-3" />
+              </a>
+
+              {selectedQuestItem.id ? (
+                <button
+                  onClick={() => handleStartQuest(selectedQuestItem.id!)}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-700 to-amber-600 hover:from-purple-600 hover:to-amber-500 font-bold text-xs text-white shadow-md transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Start Adventure</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => setSetupModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:bg-amber-300 font-bold text-xs text-purple-950 shadow-md transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Generate AI Quest Here</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-[#07040d] text-purple-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
-      {/* Top Header */}
+    <div className="h-screen w-screen bg-[#07040d] text-purple-100 flex flex-col font-sans overflow-hidden selection:bg-amber-500/30 selection:text-amber-200">
+      {/* 1. Header (Compact Full-Width) */}
       <Header
         profile={profile}
         loading={loading}
         onRefresh={() => void refreshData(userId)}
         onOpenUserModal={() => setAuthModalOpen(true)}
-        onOpenMap={() => setMapModalOpen(true)}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-md sm:max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Mode Switch: Solo Expedition vs Mystery Fellowship */}
-        <div className="flex rounded-xl bg-purple-950/60 p-1 border border-purple-900/60 text-xs shadow-md">
+      {/* Backend connection banner if server down */}
+      {connectionError && (
+        <div className="w-full bg-red-950/80 border-b border-red-800/80 px-4 py-2 text-xs text-red-200 flex items-center justify-between z-50">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+            <span>{connectionError}</span>
+          </div>
           <button
-            onClick={() => setMode("solo")}
-            className={`flex-1 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-              mode === "solo"
-                ? "bg-gradient-to-r from-purple-800 to-purple-900 text-amber-300 shadow border border-purple-700/60"
-                : "text-purple-400 hover:text-purple-200"
-            }`}
+            onClick={() => void refreshData(userId)}
+            className="text-amber-300 hover:underline font-bold text-[11px]"
           >
-            <Compass className="h-3.5 w-3.5 text-amber-400" />
-            <span>Solo Expedition</span>
-          </button>
-          <button
-            onClick={() => setMode("coop")}
-            className={`flex-1 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-              mode === "coop"
-                ? "bg-gradient-to-r from-purple-800 to-purple-900 text-amber-300 shadow border border-purple-700/60"
-                : "text-purple-400 hover:text-purple-200"
-            }`}
-          >
-            <Users className="h-3.5 w-3.5 text-amber-400" />
-            <span>Mystery Fellowship</span>
+            Retry Connection
           </button>
         </div>
+      )}
 
-        {/* 1. Backend Connection Error Banner */}
-        {connectionError && (
-          <div className="rounded-2xl bg-red-950/60 border border-red-800/70 p-4 space-y-2.5 animate-in fade-in">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-bold text-red-200">Backend Server Unreachable</p>
-                <p className="text-xs text-red-300/80 leading-relaxed">{connectionError}</p>
-                <p className="text-[11px] text-red-400/80">
-                  Ensure FastAPI is running: <code>uvicorn app.main:app --port 8000</code>
-                </p>
+      {/* 2. Main Two-Column Layout (Desktop: 38% Left / 62% Right, Mobile: Map-First or Sheet) */}
+      <main className="flex-1 w-full overflow-hidden p-3 sm:p-4">
+        {/* Desktop Layout (md+) */}
+        <div className="hidden md:flex h-full w-full gap-4">
+          {/* Left Panel: 38% Width, Independently Scrollable */}
+          <section className="w-[38%] h-full flex flex-col min-w-[320px] max-w-[500px]">
+            {renderLeftPanel()}
+          </section>
+
+          {/* Right Panel: 62% Width, Large Interactive Google Map */}
+          <section className="flex-1 h-full relative">
+            {renderRightPanel()}
+          </section>
+        </div>
+
+        {/* Mobile Layout (< md): Full-Screen Map with Draggable / Expandable Sheet */}
+        <div className="flex md:hidden h-full w-full relative">
+          {mobileTab === "map" && (
+            <div className="h-full w-full relative">
+              {renderRightPanel()}
+
+              {/* Mobile Draggable / Expandable Bottom Sheet Trigger */}
+              <div
+                className={`absolute left-0 right-0 bottom-0 z-30 bg-[#090814]/95 border-t border-purple-800/60 rounded-t-3xl backdrop-blur-md transition-all duration-300 ${
+                  mobileSheetOpen ? "h-[80%] p-4 overflow-y-auto" : "h-16 p-3"
+                }`}
+              >
+                <div
+                  onClick={() => setMobileSheetOpen(!mobileSheetOpen)}
+                  className="w-full flex flex-col items-center justify-center cursor-pointer pb-2"
+                >
+                  <div className="w-12 h-1.5 bg-purple-700/60 rounded-full mb-1" />
+                  <div className="flex items-center justify-between w-full text-xs font-bold text-amber-300 px-2">
+                    <span className="flex items-center gap-1.5">
+                      <Radio className="h-3 w-3 text-amber-400" />
+                      Nearby Quests ({nearbyQuests.length})
+                    </span>
+                    {mobileSheetOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                  </div>
+                </div>
+
+                {mobileSheetOpen && (
+                  <div className="mt-2 space-y-4">
+                    {renderLeftPanel()}
+                  </div>
+                )}
               </div>
             </div>
-            <button
-              onClick={() => void refreshData(userId)}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-red-900/40 border border-red-700/50 py-2 text-xs font-semibold text-red-200 hover:bg-red-800/40 transition cursor-pointer"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              <span>Retry Server Connection</span>
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* 2. Partial Failure Warning: Quests Error */}
-        {questsError && !connectionError && (
-          <div className="rounded-xl bg-purple-950/40 border border-purple-800/60 p-3 text-xs text-purple-200 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-purple-400 shrink-0" />
-              <span>{questsError}</span>
+          {mobileTab === "quests" && (
+            <div className="h-full w-full p-2 overflow-y-auto">
+              {renderLeftPanel()}
             </div>
-            <button
-              onClick={() => void refreshData(userId)}
-              className="text-amber-300 hover:underline shrink-0 font-medium text-[11px]"
-            >
-              Retry
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* --- VIEW SWITCHER --- */}
-        {mode === "coop" ? (
-          viewingCoopQuest && coopQuest && party ? (
-            <CoopQuestView
-              partyId={party.id}
-              quest={coopQuest}
-              onBack={() => setViewingCoopQuest(false)}
-              onRefresh={async () => {
-                if (!party) return;
-                const freshParty = await api.parties.get(party.id);
-                setParty(freshParty);
-                if (freshParty.has_active_quest) {
-                  const freshQuest = await api.parties.getSharedQuest(party.id);
-                  setCoopQuest(freshQuest);
-                }
-              }}
-              onUnlockClue={handleUnlockPartyClue}
-              onVerifyArrival={handleVerifyPartyArrival}
-              onLeaveParty={handleLeaveParty}
-              onDisbandParty={handleDisbandParty}
-              isHost={isHost}
-            />
-          ) : (
-            <PartyLobbyView
-              currentUserId={userId}
-              party={party}
-              onRefreshParty={async () => {
-                if (!party) return;
-                const fresh = await api.parties.get(party.id);
-                setParty(fresh);
-                if (fresh.has_active_quest) {
-                  const freshQ = await api.parties.getSharedQuest(fresh.id);
-                  setCoopQuest(freshQ);
-                }
-              }}
-              onCreateParty={handleCreateParty}
-              onJoinParty={handleJoinParty}
-              onLeaveParty={handleLeaveParty}
-              onDisbandParty={handleDisbandParty}
-              onSetConsent={handleSetConsent}
-              onStartQuest={handleStartPartyQuest}
-              onOpenQuest={() => setViewingCoopQuest(true)}
-              myParties={myParties}
-              onSelectParty={async (pId) => {
-                const selected = await api.parties.get(pId);
-                setParty(selected);
-                if (selected.has_active_quest) {
-                  const q = await api.parties.getSharedQuest(pId);
-                  setCoopQuest(q);
-                  setViewingCoopQuest(true);
-                }
-              }}
-            />
-          )
-        ) : activeQuest ? (
-          /* Solo Active Quest View */
-          <ActiveQuestView
-            quest={activeQuest}
-            onBack={() => {
-              setActiveQuest(null);
-              setSavedActiveQuestId(null);
-            }}
-            onStartQuest={handleStartQuest}
-            onUnlockHint={handleUnlockHint}
-            onOpenVerify={() => setVerifyModalOpen(true)}
-            onAbandonQuest={handleAbandonQuest}
-          />
-        ) : (
-          /* Solo Dashboard */
-          <div className="space-y-5 animate-in fade-in duration-200">
-            <ProfileCard
-              profile={profile}
-              loading={loading}
-              onBeginAdventure={() => setSetupModalOpen(true)}
-              onSelectUser={() => setAuthModalOpen(true)}
-            />
+          {mobileTab === "partners" && (
+            <div className="h-full w-full p-2 overflow-y-auto">
+              <PartyLobbyView
+                currentUserId={userId}
+                party={party}
+                onRefreshParty={async () => {
+                  if (!party) return;
+                  const fresh = await api.parties.get(party.id);
+                  setParty(fresh);
+                  if (fresh.has_active_quest) {
+                    const freshQ = await api.parties.getSharedQuest(fresh.id);
+                    setCoopQuest(freshQ);
+                  }
+                }}
+                onCreateParty={handleCreateParty}
+                onJoinParty={handleJoinParty}
+                onLeaveParty={handleLeaveParty}
+                onDisbandParty={handleDisbandParty}
+                onSetConsent={handleSetConsent}
+                onStartQuest={handleStartPartyQuest}
+                onOpenQuest={() => setViewingCoopQuest(true)}
+                myParties={myParties}
+                onSelectParty={async (pId) => {
+                  const selected = await api.parties.get(pId);
+                  setParty(selected);
+                  if (selected.has_active_quest) {
+                    const q = await api.parties.getSharedQuest(pId);
+                    setCoopQuest(q);
+                    setViewingCoopQuest(true);
+                  }
+                }}
+              />
+            </div>
+          )}
 
-            {/* Interactive Quest Map Entry Card */}
-            <div className="rounded-2xl border border-purple-800/40 bg-gradient-to-br from-purple-950/40 via-[#130f28]/60 to-indigo-950/40 p-4 shadow-lg flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-900/60 border border-purple-700/50 text-amber-400">
-                  <Map className="h-5 w-5" />
+          {mobileTab === "profile" && (
+            <div className="h-full w-full p-4 space-y-4 overflow-y-auto">
+              <div className="rounded-2xl border border-purple-800/40 bg-purple-950/30 p-5 space-y-4 text-center">
+                <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 to-purple-600 text-white font-extrabold text-2xl shadow-xl">
+                  {profile?.level ?? 1}
                 </div>
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-white">
-                    Interactive Quest Map
+                  <h3 className="font-extrabold text-lg text-white">
+                    {profile ? `Explorer Level ${profile.level}` : "Cadet Explorer"}
                   </h3>
-                  <p className="text-[11px] text-purple-300/70">
-                    Scan nearby POIs, inspect 100m geofences, and plan routes
+                  <p className="text-xs text-purple-300/70">
+                    {currentUserEmail || "Anonymous Scout"}
                   </p>
                 </div>
+                <button
+                  onClick={() => setAuthModalOpen(true)}
+                  className="w-full py-2.5 rounded-xl bg-purple-800 hover:bg-purple-700 font-bold text-xs text-white"
+                >
+                  Manage Account & Auth
+                </button>
               </div>
-              <button
-                onClick={() => setMapModalOpen(true)}
-                className="shrink-0 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 font-bold text-xs text-white shadow-md transition flex items-center gap-1.5"
-              >
-                <span>Open Map</span>
-              </button>
             </div>
-
-            <QuestHistoryCard
-              quests={quests}
-              loading={loading}
-              onSelectQuest={handleSelectQuestFromJournal}
-              onDiscoverAdventures={() => setSetupModalOpen(true)}
-            />
-          </div>
-        )}
+          )}
+        </div>
       </main>
 
-      {/* Footer */}
-      <footer className="w-full border-t border-purple-950/60 py-4 text-center text-[11px] text-purple-400/50">
-        <div className="flex items-center justify-center gap-1.5">
-          <Compass className="h-3.5 w-3.5 text-amber-500/60" />
-          <span>WAYBOUND • AI-Powered Mystery Exploration • Google Places & Gemma AI</span>
-        </div>
-      </footer>
+      {/* 3. Mobile Bottom Navigation (< md) */}
+      <nav className="flex md:hidden border-t border-purple-900/40 bg-[#090812]/95 backdrop-blur-md px-3 py-2 justify-around items-center z-40">
+        <button
+          onClick={() => {
+            setMobileTab("map");
+            setMobileSheetOpen(false);
+          }}
+          className={`flex flex-col items-center gap-1 text-[10px] font-semibold ${
+            mobileTab === "map" ? "text-amber-400" : "text-purple-400/70"
+          }`}
+        >
+          <MapIcon className="h-4 w-4" />
+          <span>Map</span>
+        </button>
+        <button
+          onClick={() => setMobileTab("quests")}
+          className={`flex flex-col items-center gap-1 text-[10px] font-semibold ${
+            mobileTab === "quests" ? "text-amber-400" : "text-purple-400/70"
+          }`}
+        >
+          <Compass className="h-4 w-4" />
+          <span>Quests</span>
+        </button>
+        <button
+          onClick={() => setMobileTab("partners")}
+          className={`flex flex-col items-center gap-1 text-[10px] font-semibold ${
+            mobileTab === "partners" ? "text-amber-400" : "text-purple-400/70"
+          }`}
+        >
+          <Users className="h-4 w-4" />
+          <span>Fellowship</span>
+        </button>
+        <button
+          onClick={() => setMobileTab("profile")}
+          className={`flex flex-col items-center gap-1 text-[10px] font-semibold ${
+            mobileTab === "profile" ? "text-amber-400" : "text-purple-400/70"
+          }`}
+        >
+          <User className="h-4 w-4" />
+          <span>Profile</span>
+        </button>
+      </nav>
 
-      {/* Solo Modals */}
-      <ExploreMapModal
-        isOpen={mapModalOpen}
-        onClose={() => setMapModalOpen(false)}
-        onStartQuest={handleStartQuest}
-        onGenerateQuestAtLocation={() => {
-          setSetupModalOpen(true);
-        }}
-        activeQuest={activeQuest}
-      />
+      {/* Modals */}
       <QuestSetupModal
         userId={userId}
         isOpen={setupModalOpen}
