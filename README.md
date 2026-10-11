@@ -160,12 +160,99 @@ Follow these steps to demonstrate the full hackathon MVP experience:
 
 ---
 
+- **Voice Game Master (Phase 4A)**:
+  - Spoken AI Game Master using Web Speech API with destination secrecy enforcement.
+- **Social Mystery Partner (Phase 4B)**:
+  - Two-player cooperative mystery quests with split, complementary clues.
+  - Server-side authenticated sessions (Bearer tokens) eliminating client-supplied UUID spoofing.
+  - Proof-of-Identity email OTP authentication (`POST /auth/otp/request` and `POST /auth/otp/verify`) with HMAC-SHA256 salted hashes and sliding-window rate limiting.
+  - Dedicated demo authentication (`POST /auth/demo-session`) isolated to the seeded demo explorer and strictly disabled in production (`ALLOW_DEMO_AUTH=false`).
+  - Active session logout and revocation (`POST /auth/logout`).
+  - Strict two-member party constraint enforced via atomic database transactions and constraints.
+  - Fast reservation mechanism (`generating_quest` status) that releases database row locks during external Google Places and Gemma generation.
+  - Location-grounded, complementary split clues derived from real place features without generic filler.
+  - Server-side independent GPS arrival verification without disclosing raw coordinates or live location to the partner.
+  - Nicknames by default; mutual consent required to reveal real explorer identities.
+  - Anti-exploit XP safety rule preserved: Real-world AI observation hypothesis awards 0 XP.
+
+---
+
+## Two-Browser Cooperative Gameplay Testing Guide
+
+To test the two-player mystery experience locally using two browser windows (or one normal window and one incognito window):
+
+1. **Window A (Host Explorer - "Seeker")**:
+   - Navigate to [http://localhost:3000](http://localhost:3000).
+   - In the top navigation toggle, switch from **"Solo Expedition"** to **"Mystery Fellowship"**.
+   - Under **"Form Fellowship"**, enter Fellowship Name (e.g. `Order of the Key`) and Explorer Nickname (e.g. `Seeker`). Click **"Form Fellowship"**.
+   - In the fellowship lobby, click **"Copy Secret Token"** to copy the opaque invitation token (`wb_inv_...`).
+   - The lobby shows `Seeker (Host)` and displays `Waiting for a second explorer to join...`.
+
+2. **Window B (Partner Explorer - "Scholar" / Incognito)**:
+   - Navigate to [http://localhost:3000](http://localhost:3000) in an incognito window or second browser.
+   - Switch to **"Mystery Fellowship"**.
+   - Under **"Join Existing Fellowship"**, paste the copied invitation token and choose a nickname (e.g. `Scholar`). Click **"Join Fellowship"**.
+   - The lobby updates in both windows automatically (via background synchronization) showing both explorers assembled!
+
+3. **Window A (Host Begins Cooperative Quest)**:
+   - Under **"Embark on Cooperative Quest"**, choose duration and archetype, then click **"Start Two-Player Cooperative Quest"**.
+   - Both windows transition to the **Active Cooperative Quest** screen.
+
+4. **Verify Clue Privacy & Voice Narration**:
+   - Notice that Window A receives **Fragment I** (Slot 1 perspective) while Window B receives **Fragment II** (Slot 2 perspective).
+   - Neither explorer's browser receives or displays the partner's clue text.
+   - The Voice Game Master only reads the player's own visible clues and shared story—never the partner's hidden clues or destination secret.
+
+5. **Mutual Consent & Identity Protection**:
+   - Both players see only the partner's chosen nickname (`Seeker` and `Scholar`).
+   - If Player A clicks **"Consent to Reveal Real Name"**, Player B still only sees the nickname until Player B also consents.
+   - Either player can revoke consent at any time to re-cloak their identity.
+
+6. **Server-Side Verification & Completion**:
+   - Both explorers must independently click **"Verify Arrival & Answer"** to provide their GPS location and observation answer.
+   - In Window A, submit coordinates `37.779260, -122.416040` and answer `owl`. Window A marks verified, while the quest remains waiting for the partner.
+   - In Window B, submit the observation. Once both have verified, the quest atomically completes, destination is unveiled, and shared XP is rewarded!
+
+---
+
+## Production Security & Architecture Limitations
+
+1. **Authentication & Identity Proof**:
+   - Unauthenticated creation of sessions via arbitrary client-supplied UUIDs is completely removed.
+   - Explorers authenticate via verified email OTP dispatched through configurable transactional email providers (`resend`, `smtp`, or `simulated` for dev/test).
+   - In production, simulated email delivery is strictly rejected at startup; transactional email provider credentials (`RESEND_API_KEY` or `SMTP_HOST`/`SMTP_PASSWORD`) are required and kept strictly server-side.
+   - OTP codes are **never** returned in API responses, logs, or error messages in production.
+   - OTP records are committed only after the email provider confirms successful delivery acceptance, and are automatically rolled back upon provider errors.
+   - Brute-force protection invalidates OTP codes after 5 failed attempts; replay and expired attempts are strictly rejected.
+   - Demo sessions are restricted strictly to seeded demo accounts and completely forbidden when `ENVIRONMENT=production` or `ALLOW_DEMO_AUTH=false`.
+   - `Settings` automatically validates at startup that `AUTH_SECRET` is at least 32 characters and does not match any default dev secrets when running in production.
+2. **Multi-Worker Shared Rate Limiting**:
+   - `RATE_LIMIT_STORAGE=database` coordinates sliding-window rate limiting across multi-process and multi-worker deployments via the `auth_rate_limit_entries` table.
+   - Enforces IP and per-email attempt thresholds returning `429 Too Many Requests` with `Retry-After` headers.
+3. **Session Revocation & Logout**:
+   - Active tokens can be explicitly revoked via `POST /api/v1/auth/logout`.
+   - Revoked or expired sessions are rejected immediately with 401 Unauthorized.
+4. **Database Concurrency & Row Lock Safety**:
+   - Cooperative quest generation uses an atomic reservation status (`generating_quest`), immediately releasing database row locks while Google Places and Gemma complete their network requests.
+   - Prevents database connection starvation and transaction lock timeouts.
+5. **Data Isolation & Proximity**:
+   - Partner clues and raw coordinates are strictly filtered server-side in `PartyService` prior to Pydantic serialization; client bundles never receive partner clues or partner GPS coordinates over the wire.
+
+---
+
 ## Running Full Test Suites
 
 ```bash
-# 1. Backend tests (26 async pytest cases)
+# 1. Backend tests (46 async pytest cases covering Auth OTP, Transactional Email, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
 PYTHONPATH=. .venv/bin/pytest tests/ -v
 
-# 2. Frontend tests (12 Vitest cases covering geo safety, API client, secrecy, and leveling)
+# 2. Frontend tests (40 Vitest cases covering Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)
 cd frontend && npm test
+
+# 3. Frontend Lint and Typecheck
+cd frontend && npm run lint && npm run typecheck
+
+# 4. Production Build
+cd frontend && npm run build
 ```
+
