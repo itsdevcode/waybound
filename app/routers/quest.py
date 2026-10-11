@@ -197,7 +197,8 @@ async def get_nearby_cities(
             limit=limit,
         )
     except Exception as e:
-        raise handle_service_error(e)
+        logger.warning("Places provider error while discovering nearby cities: %s", type(e).__name__)
+        return []
 
 
 @router.post(
