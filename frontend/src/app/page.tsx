@@ -36,12 +36,14 @@ import type {
   SharedPartyQuestResponse,
   PartyVerificationResponse,
 } from "@/types/party";
+import { ExploreMapModal } from "@/components/ExploreMapModal";
 import {
   AlertTriangle,
   RefreshCw,
   Compass,
   AlertCircle,
   Users,
+  Map,
 } from "lucide-react";
 
 export default function HomePage() {
@@ -76,6 +78,7 @@ export default function HomePage() {
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState<boolean>(false);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [mapModalOpen, setMapModalOpen] = useState<boolean>(false);
   const [completeResult, setCompleteResult] = useState<QuestVerificationResponse | null>(null);
 
   // Ref to track active party for polling without stale closure
@@ -476,6 +479,7 @@ export default function HomePage() {
         loading={loading}
         onRefresh={() => void refreshData(userId)}
         onOpenUserModal={() => setAuthModalOpen(true)}
+        onOpenMap={() => setMapModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -622,6 +626,29 @@ export default function HomePage() {
               onSelectUser={() => setAuthModalOpen(true)}
             />
 
+            {/* Interactive Quest Map Entry Card */}
+            <div className="rounded-2xl border border-purple-800/40 bg-gradient-to-br from-purple-950/40 via-[#130f28]/60 to-indigo-950/40 p-4 shadow-lg flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-900/60 border border-purple-700/50 text-amber-400">
+                  <Map className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-bold text-white">
+                    Interactive Quest Map
+                  </h3>
+                  <p className="text-[11px] text-purple-300/70">
+                    Scan nearby POIs, inspect 100m geofences, and plan routes
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setMapModalOpen(true)}
+                className="shrink-0 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 font-bold text-xs text-white shadow-md transition flex items-center gap-1.5"
+              >
+                <span>Open Map</span>
+              </button>
+            </div>
+
             <QuestHistoryCard
               quests={quests}
               loading={loading}
@@ -641,6 +668,15 @@ export default function HomePage() {
       </footer>
 
       {/* Solo Modals */}
+      <ExploreMapModal
+        isOpen={mapModalOpen}
+        onClose={() => setMapModalOpen(false)}
+        onStartQuest={handleStartQuest}
+        onGenerateQuestAtLocation={() => {
+          setSetupModalOpen(true);
+        }}
+        activeQuest={activeQuest}
+      />
       <QuestSetupModal
         userId={userId}
         isOpen={setupModalOpen}

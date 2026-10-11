@@ -96,3 +96,29 @@ export interface NarrationSynthesizeParams {
   voice_id?: string;
   model_id?: string;
 }
+
+export type QuestMarkerStatus = "available" | "active" | "completed" | "locked";
+
+export interface NearbyQuestItem {
+  id: string | null;
+  title: string;
+  description: string;
+  difficulty: DifficultyType | string;
+  estimated_minutes: number;
+  reward_xp: number;
+  status: QuestMarkerStatus;
+  latitude: number;
+  longitude: number;
+  distance_meters: number;
+  verification_radius_meters: number;
+  is_active: boolean;
+  is_simulated?: boolean;
+}
+
+export interface NearbyQuestsResponse {
+  items: NearbyQuestItem[];
+  center_latitude: number;
+  center_longitude: number;
+  radius_meters: number;
+  total_count: number;
+}

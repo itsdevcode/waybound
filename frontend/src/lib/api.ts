@@ -2,6 +2,7 @@ import type {
   ApiErrorPayload,
   NarrationConfigResponse,
   NarrationSynthesizeParams,
+  NearbyQuestsResponse,
   ProfileResponse,
   QuestCreateRequest,
   QuestHintResponse,
@@ -308,6 +309,25 @@ export const api = {
     return request<QuestResponse>(`/api/v1/quests/${encodeURIComponent(questId)}/abandon`, {
       method: "POST",
     });
+  },
+
+  /**
+   * Interactive Quest Map: Get Nearby Quests
+   * GET /api/v1/quests/nearby
+   */
+  async getNearbyQuests(
+    latitude: number,
+    longitude: number,
+    radiusMeters: number = 1000,
+    limit: number = 20
+  ): Promise<NearbyQuestsResponse> {
+    const params = new URLSearchParams({
+      latitude: latitude.toString(),
+      longitude: longitude.toString(),
+      radius_meters: radiusMeters.toString(),
+      limit: limit.toString(),
+    });
+    return request<NearbyQuestsResponse>(`/api/v1/quests/nearby?${params.toString()}`);
   },
 
   /**

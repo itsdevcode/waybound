@@ -89,3 +89,7 @@ services:
       # Configure your deployed backend's public HTTPS URL in Render Dashboard (e.g. https://waybound-backend.onrender.com)
       - key: BACKEND_URL
         sync: false
+      # Google Maps JavaScript API Client Key (Optional: Falls back to Tactical Radar when unconfigured)
+      # Restrict by HTTP referrers in Google Cloud Console to your deployed Render frontend origin
+      - key: NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
+        sync: false

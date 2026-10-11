@@ -97,6 +97,32 @@ class DestinationCandidate(BaseModel):
     clues: list[str]
 
 
+# --- Nearby Quests Response Schemas ---
+
+class NearbyQuestItem(BaseModel):
+    id: uuid.UUID | None = Field(default=None, description="Existing quest ID if generated/active/completed, else None for available POIs")
+    title: str = Field(..., description="Quest exploration title")
+    description: str = Field(..., description="Short quest teaser description")
+    difficulty: DifficultyType | str = Field(..., description="Difficulty level")
+    estimated_minutes: int = Field(..., description="Estimated exploration duration in minutes")
+    reward_xp: int = Field(..., description="Potential XP reward")
+    status: Literal["available", "active", "completed", "locked"] = Field(..., description="Exploration marker status")
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="Approximate exploration or destination latitude")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="Approximate exploration or destination longitude")
+    distance_meters: float = Field(..., ge=0.0, description="Straight-line distance from user in meters")
+    verification_radius_meters: float = Field(default=100.0, description="Geofence boundary radius for arrival verification")
+    is_active: bool = Field(default=False, description="Whether this is the user's currently active quest")
+    is_simulated: bool = Field(default=False, description="Whether this marker is a simulated demo POI (0 real-world XP)")
+
+
+class NearbyQuestsResponse(BaseModel):
+    items: list[NearbyQuestItem] = Field(..., description="List of nearby quest markers within radius")
+    center_latitude: float = Field(..., ge=-90.0, le=90.0)
+    center_longitude: float = Field(..., ge=-180.0, le=180.0)
+    radius_meters: float = Field(..., ge=100.0, le=50000.0)
+    total_count: int = Field(..., ge=0)
+
+
 # --- Narration Schemas ---
 
 class NarrationRequest(BaseModel):

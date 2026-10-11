@@ -42,6 +42,14 @@ class GooglePlacesError(Exception):
         self.status_code = status_code
 
 
+import time
+
+# Cache structure: key -> (timestamp, list[PlaceCandidate])
+_PLACES_CACHE: dict[str, tuple[float, list[PlaceCandidate]]] = {}
+_PLACES_CACHE_TTL_SECONDS = 300.0  # 5 minutes TTL
+_PLACES_CACHE_MAX_ENTRIES = 200
+
+
 class GooglePlacesService:
     """
     Service for discovering real nearby public destinations using Google Places API (New).
@@ -68,7 +76,7 @@ class GooglePlacesService:
     ) -> list[PlaceCandidate]:
         """
         Discovers nearby public places, validates coordinates, and returns normalized PlaceCandidates
-        ordered by distance.
+        ordered by distance. Uses an in-memory TTL cache to minimize Google Cloud billing costs.
         """
         # Validate coordinates
         if not math.isfinite(latitude) or not math.isfinite(longitude):
@@ -78,13 +86,27 @@ class GooglePlacesService:
         if not (-180.0 <= longitude <= 180.0):
             raise ValueError(f"Longitude must be between -180 and 180, got {longitude}")
 
+        radius = radius_meters if radius_meters is not None else settings.google_places_search_radius_meters
+        if not math.isfinite(radius):
+            raise ValueError("Search radius must be a finite number")
+        if not (settings.google_places_min_radius_meters <= radius <= settings.google_places_max_radius_meters):
+            msg = f"Search radius must be between {settings.google_places_min_radius_meters}m and {settings.google_places_max_radius_meters}m, got {radius}m"
+            raise ValueError(msg)
+
+        # Check Cache (rounded to ~110m grid to group identical search centers)
+        cache_key = f"{round(latitude, 3)}:{round(longitude, 3)}:{round(radius, -1)}:{max_results}"
+        now = time.time()
+        if cache_key in _PLACES_CACHE:
+            cached_time, cached_candidates = _PLACES_CACHE[cache_key]
+            if (now - cached_time) < _PLACES_CACHE_TTL_SECONDS:
+                logger.info("Serving Google Places discovery from cache for key %s", cache_key)
+                return cached_candidates
+
         if not self.api_key:
             raise GooglePlacesError(
                 "Google Maps API key is not configured. Set GOOGLE_MAPS_API_KEY.",
                 status_code=500,
             )
-
-        radius = radius_meters if radius_meters is not None else settings.google_places_search_radius_meters
         if not math.isfinite(radius):
             raise ValueError("Search radius must be a finite number")
         if not (settings.google_places_min_radius_meters <= radius <= settings.google_places_max_radius_meters):
@@ -242,6 +264,12 @@ class GooglePlacesService:
 
             # Sort by distance
             candidates.sort(key=lambda c: c.distance_meters if c.distance_meters is not None else float("inf"))
+
+            # Store in cache
+            if len(_PLACES_CACHE) >= _PLACES_CACHE_MAX_ENTRIES:
+                _PLACES_CACHE.clear()
+            _PLACES_CACHE[cache_key] = (now, candidates)
+
             return candidates
 
         except (httpx.TimeoutException, httpx.ConnectTimeout) as e:

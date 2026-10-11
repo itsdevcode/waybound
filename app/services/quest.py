@@ -1,6 +1,9 @@
+import logging
 import math
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +14,7 @@ from app.models.quest_step import QuestStep
 from app.repositories.quest import QuestRepository
 from app.repositories.user import UserRepository
 from app.schemas.quest import (
+    NearbyQuestItem,
     QuestCreateRequest,
     QuestHintResponse,
     QuestResponse,
@@ -350,3 +354,151 @@ class QuestService:
             level=profile.level,
             quest=self._to_response_schema(refreshed_quest),
         )
+
+    async def get_nearby_quests(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_meters: float = 1000.0,
+        limit: int = 20,
+        user_id: uuid.UUID | None = None,
+    ) -> list[NearbyQuestItem]:
+        """
+        Discovers nearby quests and exploration markers within the specified radius.
+        Includes:
+        1. Any active, draft, or completed quests associated with the explorer within the radius.
+        2. Configured exploration destinations (from provider or simulated catalog) within radius.
+        Maintains secrecy: Only active quest destinations or completed destinations disclose target details.
+        """
+        if not math.isfinite(latitude) or not math.isfinite(longitude):
+            raise ValueError("Geographic coordinates must be finite real numbers.")
+        if not (-90.0 <= latitude <= 90.0):
+            raise ValueError(f"Latitude must be between -90 and 90 degrees, got {latitude}.")
+        if not (-180.0 <= longitude <= 180.0):
+            raise ValueError(f"Longitude must be between -180 and 180 degrees, got {longitude}.")
+        if not math.isfinite(radius_meters) or radius_meters <= 0:
+            raise ValueError("Radius must be a positive finite number.")
+        if not (100.0 <= radius_meters <= 50000.0):
+            raise ValueError(f"Radius must be between 100m and 50,000m, got {radius_meters}.")
+
+        safe_limit = min(max(limit, 1), 50)
+        nearby_items: list[NearbyQuestItem] = []
+        seen_coords: set[tuple[float, float]] = set()
+
+        # 1. If user is authenticated, query their active and recent quests
+        if user_id:
+            user_quests = await self.quest_repo.list_by_user_id(user_id)
+            for uq in user_quests:
+                dest_lat = float(uq.destination_latitude)
+                dest_lon = float(uq.destination_longitude)
+                dist = calculate_haversine_distance_meters(
+                    latitude, longitude, dest_lat, dest_lon
+                )
+                if dist <= radius_meters:
+                    seen_coords.add((round(dest_lat, 5), round(dest_lon, 5)))
+                    status_mapped = "active" if uq.status == "active" else (
+                        "completed" if uq.status == "completed" else "available"
+                    )
+                    nearby_items.append(
+                        NearbyQuestItem(
+                            id=uq.id,
+                            title=uq.title,
+                            description=uq.description[:180] + ("..." if len(uq.description) > 180 else ""),
+                            difficulty=uq.difficulty,
+                            estimated_minutes=uq.estimated_minutes,
+                            reward_xp=uq.reward_xp,
+                            status=status_mapped,
+                            latitude=dest_lat,
+                            longitude=dest_lon,
+                            distance_meters=round(dist, 1),
+                            verification_radius_meters=settings.verification_radius_meters,
+                            is_active=(uq.status == "active"),
+                        )
+                    )
+
+        # 2. Add available exploration candidate destinations
+        # Check if Google Places API is configured or if provider is google_places_gemma
+        is_google_places_enabled = bool(settings.google_maps_api_key.strip())
+        real_places_found = False
+
+        if is_google_places_enabled:
+            try:
+                from app.services.places import GooglePlacesService
+                places_svc = GooglePlacesService()
+                place_candidates = await places_svc.search_nearby_places(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_meters=radius_meters,
+                    max_results=min(safe_limit, 20),
+                )
+                for candidate in place_candidates:
+                    coord_key = (round(candidate.latitude, 5), round(candidate.longitude, 5))
+                    if coord_key in seen_coords:
+                        continue
+                    seen_coords.add(coord_key)
+                    dist = candidate.distance_meters if candidate.distance_meters is not None else calculate_haversine_distance_meters(
+                        latitude, longitude, candidate.latitude, candidate.longitude
+                    )
+                    type_formatted = candidate.primary_type.replace("_", " ").title() if candidate.primary_type else "Curiosity"
+                    nearby_items.append(
+                        NearbyQuestItem(
+                            id=None,
+                            title=f"The Mystery of {candidate.name}",
+                            description=f"Real-world public {type_formatted}. Discover history and local secrets at this verified landmark.",
+                            difficulty="medium",
+                            estimated_minutes=30,
+                            reward_xp=150,
+                            status="available",
+                            latitude=candidate.latitude,
+                            longitude=candidate.longitude,
+                            distance_meters=round(dist, 1),
+                            verification_radius_meters=settings.verification_radius_meters,
+                            is_active=False,
+                            is_simulated=False,
+                        )
+                    )
+                if place_candidates:
+                    real_places_found = True
+            except Exception as e:
+                logger.warning(
+                    "Google Places discovery failed in get_nearby_quests, falling back to simulated catalog: %s",
+                    type(e).__name__,
+                )
+
+        # 3. Explicit simulated demo fallback when Google Places is unconfigured or returns no results
+        if not real_places_found:
+            from app.services.providers.demo import DEFAULT_DEMO_DESTINATIONS
+
+            for candidate in DEFAULT_DEMO_DESTINATIONS:
+                coord_key = (round(candidate.latitude, 5), round(candidate.longitude, 5))
+                if coord_key in seen_coords:
+                    continue
+
+                dist = calculate_haversine_distance_meters(
+                    latitude, longitude, candidate.latitude, candidate.longitude
+                )
+                # If within radius
+                if dist <= radius_meters:
+                    seen_coords.add(coord_key)
+                    title_clean = candidate.name.replace("[Simulated Demo] ", "[Demo Scenario] ")
+                    nearby_items.append(
+                        NearbyQuestItem(
+                            id=None,
+                            title=title_clean,
+                            description=f"[Simulated POI - 0 XP] {candidate.description[:140]}...",
+                            difficulty=candidate.difficulties[0] if candidate.difficulties else "medium",
+                            estimated_minutes=candidate.suitable_minutes[0] if candidate.suitable_minutes else 30,
+                            reward_xp=150,
+                            status="available",
+                            latitude=candidate.latitude,
+                            longitude=candidate.longitude,
+                            distance_meters=round(dist, 1),
+                            verification_radius_meters=settings.verification_radius_meters,
+                            is_active=False,
+                            is_simulated=True,
+                        )
+                    )
+
+        # Sort by distance (nearest first)
+        nearby_items.sort(key=lambda item: item.distance_meters)
+        return nearby_items[:safe_limit]

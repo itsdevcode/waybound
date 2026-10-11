@@ -348,6 +348,7 @@ The blueprint declares three synchronized components:
 | `ELEVENLABS_API_KEY` | Backend | Optional | Required if `ELEVENLABS_ENABLED=true`. Server-side only. |
 | `NEXT_PUBLIC_API_URL` | Frontend | **Yes** | Public HTTPS backend URL (e.g. `https://waybound-backend.onrender.com` or custom domain). Baked into client bundle at build-time and used for browser API requests. Configured with `sync: false`. |
 | `BACKEND_URL` | Frontend | Optional | Public HTTPS backend URL or valid absolute URL (e.g. `https://waybound-backend.onrender.com`) used by Next.js server-side rewrites. Configured with `sync: false`. |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Frontend | Optional | Client Google Maps JavaScript API key for Interactive Quest Map. Restrict key to authorized HTTP referrers in Google Cloud Console. When omitted, WAYBOUND automatically and gracefully falls back to the built-in Tactical Radar map. |
 
 ---
 
@@ -368,7 +369,15 @@ Render provisions services with initial defaults. Depending on naming collisions
 3. **`BACKEND_URL` (Frontend Service -> Environment)**:
    - Set to the public HTTPS backend URL (e.g., `https://waybound-backend.onrender.com`) for Next.js server-side API proxy rewrites (`/api/v1/:path*`).
 
-4. **`EMAIL_FROM` (Backend Service -> Environment)**:
+4. **`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (Frontend Service -> Environment)**:
+   - Optional: Provide your Google Maps Platform API key with **Maps JavaScript API**, **Geocoding API**, and **Directions API** enabled.
+   - **Domain Restrictions (Crucial Security Requirement)**: In Google Cloud Console (*APIs & Services -> Credentials -> Key Restrictions*), select **Websites (HTTP referrers)** and add your specific, fully-qualified production frontend domain and local development URLs:
+     - `https://waybound-frontend.onrender.com/*` (or your exact custom domain, e.g. `https://explorer.yourdomain.com/*`)
+     - `http://localhost:3000/*` and `http://127.0.0.1:3000/*` (for local development testing)
+     - **Do NOT** use broad wildcards like `*.onrender.com/*` or `*/*`, which leave your billing quota vulnerable to cross-origin abuse.
+   - If left unconfigured or blocked, WAYBOUND renders the built-in SVG Tactical Radar map with zero build or runtime crashes.
+
+5. **`EMAIL_FROM` (Backend Service -> Environment)**:
    - Configure your verified sender address (e.g., `WAYBOUND <auth@yourdomain.com>`) or the Resend sandbox address (`WAYBOUND <onboarding@resend.dev>`).
    - Default unverified placeholders (like `auth@waybound.dev`) fail startup validation.
 
