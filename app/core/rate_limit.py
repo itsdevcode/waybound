@@ -15,7 +15,7 @@ from app.models.rate_limit import AuthRateLimitEntry
 
 class BaseRateLimiter(abc.ABC):
     @abc.abstractmethod
-    async def check(self, key: str, db: AsyncSession | None = None) -> None:
+    async def check(self, key: str, db: AsyncSession | None = None, detail: str | None = None) -> None:
         pass
 
     @abc.abstractmethod
@@ -28,14 +28,20 @@ class InMemoryRateLimiter(BaseRateLimiter):
     In-memory sliding window rate limiter by client identifier (e.g. IP address or email).
     """
 
-    def __init__(self, limit: int = 10, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        limit: int = 10,
+        window_seconds: int = 60,
+        error_detail: str = "Too many requests. Please try again later.",
+    ) -> None:
         self.limit = limit
         self.window_seconds = window_seconds
+        self.error_detail = error_detail
         self._lock = Lock()
         self._attempts: dict[str, list[float]] = defaultdict(list)
 
     @override
-    async def check(self, key: str, db: AsyncSession | None = None) -> None:
+    async def check(self, key: str, db: AsyncSession | None = None, detail: str | None = None) -> None:
         now = time.time()
         with self._lock:
             cutoff = now - self.window_seconds
@@ -45,7 +51,7 @@ class InMemoryRateLimiter(BaseRateLimiter):
                 retry_after = int(self._attempts[key][0] + self.window_seconds - now) + 1
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Too many authentication requests. Please try again later.",
+                    detail=detail or self.error_detail,
                     headers={"Retry-After": str(max(1, retry_after))},
                 )
 
@@ -63,15 +69,21 @@ class DatabaseRateLimiter(BaseRateLimiter):
     Uses PostgreSQL advisory locks keyed on the hashed identifier to eliminate count-then-insert races.
     """
 
-    def __init__(self, limit: int = 10, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        limit: int = 10,
+        window_seconds: int = 60,
+        error_detail: str = "Too many requests. Please try again later.",
+    ) -> None:
         self.limit = limit
         self.window_seconds = window_seconds
-        self._fallback = InMemoryRateLimiter(limit=limit, window_seconds=window_seconds)
+        self.error_detail = error_detail
+        self._fallback = InMemoryRateLimiter(limit=limit, window_seconds=window_seconds, error_detail=error_detail)
 
     @override
-    async def check(self, key: str, db: AsyncSession | None = None) -> None:
+    async def check(self, key: str, db: AsyncSession | None = None, detail: str | None = None) -> None:
         if db is None:
-            await self._fallback.check(key)
+            await self._fallback.check(key, detail=detail)
             return
 
         now = time.time()
@@ -107,7 +119,7 @@ class DatabaseRateLimiter(BaseRateLimiter):
             await db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many authentication requests. Please try again later.",
+                detail=detail or self.error_detail,
                 headers={"Retry-After": str(max(1, retry_after))},
             )
 
@@ -138,12 +150,50 @@ class DatabaseRateLimiter(BaseRateLimiter):
 def create_rate_limiter() -> BaseRateLimiter:
     storage = str(settings.rate_limit_storage).lower().strip()
     limit = int(settings.auth_rate_limit_per_minute)
+    detail = "Too many authentication requests. Please try again later."
     if storage == "database":
-        return DatabaseRateLimiter(limit=limit, window_seconds=60)
-    return InMemoryRateLimiter(limit=limit, window_seconds=60)
+        return DatabaseRateLimiter(limit=limit, window_seconds=60, error_detail=detail)
+    return InMemoryRateLimiter(limit=limit, window_seconds=60, error_detail=detail)
 
 
 auth_rate_limiter: BaseRateLimiter = create_rate_limiter()
+
+
+def create_narration_rate_limiter() -> BaseRateLimiter:
+    storage = str(settings.rate_limit_storage).lower().strip()
+    limit = int(settings.elevenlabs_rate_limit_per_minute)
+    detail = "Narration rate limit reached. Please try again later or use free browser speech."
+    if storage == "database":
+        return DatabaseRateLimiter(limit=limit, window_seconds=60, error_detail=detail)
+    return InMemoryRateLimiter(limit=limit, window_seconds=60, error_detail=detail)
+
+
+narration_rate_limiter: BaseRateLimiter = create_narration_rate_limiter()
+
+
+def create_narration_user_daily_limiter() -> BaseRateLimiter:
+    storage = str(settings.rate_limit_storage).lower().strip()
+    limit = int(settings.elevenlabs_user_daily_limit)
+    detail = "Daily voice narration credit limit reached for this explorer. Free browser narration remains available."
+    if storage == "database":
+        return DatabaseRateLimiter(limit=limit, window_seconds=86400, error_detail=detail)
+    return InMemoryRateLimiter(limit=limit, window_seconds=86400, error_detail=detail)
+
+
+narration_user_daily_limiter: BaseRateLimiter = create_narration_user_daily_limiter()
+
+
+def create_narration_global_daily_limiter() -> BaseRateLimiter:
+    storage = str(settings.rate_limit_storage).lower().strip()
+    limit = int(settings.elevenlabs_global_daily_limit)
+    detail = "System-wide voice narration credit limit reached for today. Free browser narration remains available."
+    if storage == "database":
+        return DatabaseRateLimiter(limit=limit, window_seconds=86400, error_detail=detail)
+    return InMemoryRateLimiter(limit=limit, window_seconds=86400, error_detail=detail)
+
+
+narration_global_daily_limiter: BaseRateLimiter = create_narration_global_daily_limiter()
+
 
 
 def is_ip_trusted_proxy(ip_str: str, trusted_config: str) -> bool:

@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { Volume2, VolumeX, Play, Pause, Square, RotateCcw } from "lucide-react";
+import { Volume2, VolumeX, Play, Pause, Square, RotateCcw, Loader2 } from "lucide-react";
+import type { NarrationQuestContext } from "@/lib/speechController";
 
 interface NarrationControlsProps {
   trackId: string;
@@ -11,7 +12,9 @@ interface NarrationControlsProps {
   isPaused: boolean;
   isMuted: boolean;
   isSupported: boolean;
-  onPlay: (trackId: string, text: string) => void;
+  isLoading?: boolean;
+  questContext?: NarrationQuestContext;
+  onPlay: (trackId: string, text: string, context?: NarrationQuestContext) => void;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
@@ -28,6 +31,8 @@ export function NarrationControls({
   isPaused,
   isMuted,
   isSupported,
+  isLoading = false,
+  questContext,
   onPlay,
   onPause,
   onResume,
@@ -38,6 +43,7 @@ export function NarrationControls({
 }: NarrationControlsProps) {
   const isThisTrackActive = activeTrackId === trackId;
   const isThisTrackPlaying = isThisTrackActive && isPlaying;
+  const isThisTrackLoading = isThisTrackActive && isLoading;
 
   if (!isSupported) {
     return (
@@ -65,7 +71,7 @@ export function NarrationControls({
     );
   }
 
-  // Active playing / paused state for this snippet
+  // Active playing / paused / loading state for this snippet
   if (isThisTrackActive) {
     return (
       <div
@@ -75,52 +81,61 @@ export function NarrationControls({
             : "bg-purple-900/40 rounded-lg px-2 py-0.5"
         }`}
         role="region"
-        aria-label={`Audio controls for ${label}${isPaused ? " (paused)" : ""}`}
+        aria-label={`Audio controls for ${label}${isPaused ? " (paused)" : ""}${isThisTrackLoading ? " (generating speech)" : ""}`}
       >
-        {/* Animated Audio Equalizer Wave (respects prefers-reduced-motion) */}
-        {isThisTrackPlaying && (
-          <div
-            className="flex items-center gap-0.5 h-3.5 px-1 mr-0.5"
-            aria-hidden="true"
-          >
-            <span className="w-0.5 h-3 bg-amber-400 rounded-full animate-pulse motion-reduce:animate-none" />
-            <span className="w-0.5 h-4 bg-amber-300 rounded-full animate-bounce motion-reduce:animate-none" />
-            <span className="w-0.5 h-2 bg-amber-400 rounded-full animate-pulse motion-reduce:animate-none" />
+        {isThisTrackLoading ? (
+          <div className="flex items-center gap-1 px-1 py-0.5 text-[11px] text-amber-300">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span className="text-[10px]">Synthesizing...</span>
           </div>
-        )}
-
-        {isThisTrackPlaying ? (
-          <button
-            onClick={onPause}
-            className="p-1 rounded text-amber-300 hover:text-white hover:bg-purple-800/60 transition"
-            title="Pause narration"
-            aria-label={`Pause narration for ${label}`}
-          >
-            <Pause className="h-3.5 w-3.5 fill-current" />
-          </button>
         ) : (
-          <button
-            onClick={onResume}
-            className="p-1 rounded text-amber-300 hover:text-white hover:bg-purple-800/60 transition"
-            title="Resume narration"
-            aria-label={`Resume narration for ${label}`}
-          >
-            <Play className="h-3.5 w-3.5 fill-current" />
-          </button>
-        )}
+          <>
+            {/* Animated Audio Equalizer Wave (respects prefers-reduced-motion) */}
+            {isThisTrackPlaying && (
+              <div
+                className="flex items-center gap-0.5 h-3.5 px-1 mr-0.5"
+                aria-hidden="true"
+              >
+                <span className="w-0.5 h-3 bg-amber-400 rounded-full animate-pulse motion-reduce:animate-none" />
+                <span className="w-0.5 h-4 bg-amber-300 rounded-full animate-bounce motion-reduce:animate-none" />
+                <span className="w-0.5 h-2 bg-amber-400 rounded-full animate-pulse motion-reduce:animate-none" />
+              </div>
+            )}
 
-        <button
-          onClick={onReplay}
-          className="p-1 rounded text-purple-300 hover:text-amber-200 hover:bg-purple-800/60 transition"
-          title="Replay from start"
-          aria-label={`Replay narration for ${label}`}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-        </button>
+            {isThisTrackPlaying ? (
+              <button
+                onClick={onPause}
+                className="p-1 rounded text-amber-300 hover:text-white hover:bg-purple-800/60 transition cursor-pointer"
+                title="Pause narration"
+                aria-label={`Pause narration for ${label}`}
+              >
+                <Pause className="h-3.5 w-3.5 fill-current" />
+              </button>
+            ) : (
+              <button
+                onClick={onResume}
+                className="p-1 rounded text-amber-300 hover:text-white hover:bg-purple-800/60 transition cursor-pointer"
+                title="Resume narration"
+                aria-label={`Resume narration for ${label}`}
+              >
+                <Play className="h-3.5 w-3.5 fill-current" />
+              </button>
+            )}
+
+            <button
+              onClick={onReplay}
+              className="p-1 rounded text-purple-300 hover:text-amber-200 hover:bg-purple-800/60 transition cursor-pointer"
+              title="Replay from start"
+              aria-label={`Replay narration for ${label}`}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          </>
+        )}
 
         <button
           onClick={onStop}
-          className="p-1 rounded text-purple-300 hover:text-red-300 hover:bg-purple-800/60 transition"
+          className="p-1 rounded text-purple-300 hover:text-red-300 hover:bg-purple-800/60 transition cursor-pointer"
           title="Stop narration"
           aria-label={`Stop narration for ${label}`}
         >
@@ -134,7 +149,7 @@ export function NarrationControls({
   if (variant === "prominent") {
     return (
       <button
-        onClick={() => onPlay(trackId, textToNarrate)}
+        onClick={() => onPlay(trackId, textToNarrate, questContext)}
         className="flex items-center gap-1.5 rounded-xl border border-purple-700/50 bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 hover:text-white px-3 py-1.5 text-xs font-semibold transition cursor-pointer shadow-sm group"
         aria-label={`Spoken narration: ${label}`}
       >
@@ -146,7 +161,7 @@ export function NarrationControls({
 
   return (
     <button
-      onClick={() => onPlay(trackId, textToNarrate)}
+      onClick={() => onPlay(trackId, textToNarrate, questContext)}
       className="flex items-center gap-1 text-[11px] font-semibold text-purple-300 hover:text-amber-300 transition cursor-pointer"
       title={`Listen to ${label}`}
       aria-label={`Listen to ${label}`}

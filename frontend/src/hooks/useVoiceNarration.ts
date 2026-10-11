@@ -1,23 +1,29 @@
 "use client";
 
 import { useSyncExternalStore, useId, useCallback, useEffect } from "react";
-import { speechController } from "@/lib/speechController";
+import { speechController, type NarrationQuestContext } from "@/lib/speechController";
+import type { VoiceProvider } from "@/lib/speech";
 
 export interface VoiceNarrationState {
   isSupported: boolean;
   isMuted: boolean;
+  provider: VoiceProvider;
+  isLoadingAudio: boolean;
+  elevenlabsAvailable: boolean;
+  activeProvider: "browser" | "elevenlabs" | null;
   isPlaying: boolean;
   isPaused: boolean;
   activeTrackId: string | null;
   voices: SpeechSynthesisVoice[];
   selectedVoice: SpeechSynthesisVoice | null;
-  play: (trackId: string, text: string) => void;
+  play: (trackId: string, text: string, context?: NarrationQuestContext) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
   replay: () => void;
   toggleMute: () => void;
   setMuted: (muted: boolean) => void;
+  setProvider: (provider: VoiceProvider) => void;
   selectVoice: (voiceUri: string) => void;
 }
 
@@ -47,8 +53,8 @@ export function useVoiceNarration(customOwnerId?: string): VoiceNarrationState {
   }, [ownerId]);
 
   const play = useCallback(
-    (trackId: string, text: string) => {
-      speechController.play(trackId, text, ownerId);
+    (trackId: string, text: string, context?: NarrationQuestContext) => {
+      speechController.play(trackId, text, ownerId, context);
     },
     [ownerId]
   );
@@ -77,6 +83,10 @@ export function useVoiceNarration(customOwnerId?: string): VoiceNarrationState {
     speechController.setMuted(muted);
   }, []);
 
+  const setProvider = useCallback((provider: VoiceProvider) => {
+    speechController.setProvider(provider);
+  }, []);
+
   const selectVoice = useCallback((voiceUri: string) => {
     speechController.selectVoice(voiceUri);
   }, []);
@@ -84,6 +94,10 @@ export function useVoiceNarration(customOwnerId?: string): VoiceNarrationState {
   return {
     isSupported: state.isSupported,
     isMuted: state.isMuted,
+    provider: state.provider,
+    isLoadingAudio: state.isLoadingAudio,
+    elevenlabsAvailable: state.elevenlabsAvailable,
+    activeProvider: state.activeProvider,
     isPlaying: state.isPlaying,
     isPaused: state.isPaused,
     activeTrackId: state.activeTrackId,
@@ -96,6 +110,7 @@ export function useVoiceNarration(customOwnerId?: string): VoiceNarrationState {
     replay,
     toggleMute,
     setMuted,
+    setProvider,
     selectVoice,
   };
 }

@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     # Example: "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     trusted_proxies: str = "127.0.0.1,::1"
 
+    # ElevenLabs Text-to-Speech Configuration
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"  # Default: Rachel (warm storyteller)
+    elevenlabs_model_id: str = "eleven_turbo_v2_5"      # Low-latency, credit-efficient
+    elevenlabs_enabled: bool = False
+    elevenlabs_timeout_seconds: float = 15.0
+    elevenlabs_rate_limit_per_minute: int = 20
+    elevenlabs_user_daily_limit: int = 50
+    elevenlabs_global_daily_limit: int = 200
+    narration_cache_max_items: int = 500
+    elevenlabs_allowed_voice_ids: str = "21m00Tcm4TlvDq8ikWAM,AZnzlk1XvdvUeBnXmlld,EXAVITQu4vr4xnSDxMaL,ErXwobaYiN019PkySvjV,MF3mGyEYCl7XYWbV9V6O,TxGEqnHWrfWFTfGW9XjX,VR6AewLTigWG4xSOukaG,pNInz6obpgDQGcFmaJgB,yoZ06aMxZJJ28mfd3POQ"
+    elevenlabs_allowed_model_ids: str = "eleven_multilingual_v2,eleven_turbo_v2_5,eleven_turbo_v2,eleven_monolingual_v1"
+
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if self.environment == "production":

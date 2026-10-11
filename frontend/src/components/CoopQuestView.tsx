@@ -168,6 +168,8 @@ export function CoopQuestView({
               isPaused={narration.isPaused}
               isMuted={narration.isMuted}
               isSupported={narration.isSupported}
+              isLoading={narration.isLoadingAudio}
+              questContext={{ questId: quest.quest_id, contentType: "story" }}
               onPlay={narration.play}
               onPause={narration.pause}
               onResume={narration.resume}
@@ -283,6 +285,8 @@ export function CoopQuestView({
                       isPaused={narration.isPaused}
                       isMuted={narration.isMuted}
                       isSupported={narration.isSupported}
+                      isLoading={narration.isLoadingAudio}
+                      questContext={{ questId: quest.quest_id, contentType: "clue", stepId: clue.id }}
                       onPlay={narration.play}
                       onPause={narration.pause}
                       onResume={narration.resume}

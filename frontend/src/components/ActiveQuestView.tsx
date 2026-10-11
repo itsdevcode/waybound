@@ -172,6 +172,8 @@ export function ActiveQuestView({
               isPaused={narration.isPaused}
               isMuted={narration.isMuted}
               isSupported={narration.isSupported}
+              isLoading={narration.isLoadingAudio}
+              questContext={{ questId: quest.id, contentType: "story" }}
               onPlay={narration.play}
               onPause={narration.pause}
               onResume={narration.resume}
@@ -280,6 +282,8 @@ export function ActiveQuestView({
                       isPaused={narration.isPaused}
                       isMuted={narration.isMuted}
                       isSupported={narration.isSupported}
+                      isLoading={narration.isLoadingAudio}
+                      questContext={{ questId: quest.id, contentType: "clue", stepId: clue.id }}
                       onPlay={narration.play}
                       onPause={narration.pause}
                       onResume={narration.resume}
@@ -316,6 +320,7 @@ export function ActiveQuestView({
               isPaused={narration.isPaused}
               isMuted={narration.isMuted}
               isSupported={narration.isSupported}
+              isLoading={narration.isLoadingAudio}
               onPlay={narration.play}
               onPause={narration.pause}
               onResume={narration.resume}
