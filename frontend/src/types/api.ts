@@ -122,3 +122,13 @@ export interface NearbyQuestsResponse {
   radius_meters: number;
   total_count: number;
 }
+
+export interface NearbyCityItem {
+  name: string;
+  region: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  place_id?: string | null;
+  distance_km?: number | null;
+}

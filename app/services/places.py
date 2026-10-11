@@ -6,7 +6,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.geo import calculate_haversine_distance_meters
-from app.schemas.place import PlaceCandidate
+from app.schemas.place import CitySuggestion, PlaceCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ import time
 
 # Cache structure: key -> (timestamp, list[PlaceCandidate])
 _PLACES_CACHE: dict[str, tuple[float, list[PlaceCandidate]]] = {}
+_CITIES_CACHE: dict[str, tuple[float, list[CitySuggestion]]] = {}
 _PLACES_CACHE_TTL_SECONDS = 300.0  # 5 minutes TTL
 _PLACES_CACHE_MAX_ENTRIES = 200
 
@@ -284,3 +285,140 @@ class GooglePlacesService:
                 "Network error while connecting to Google Places API",
                 status_code=504,
             )
+
+    async def discover_nearby_cities(
+        self,
+        latitude: float,
+        longitude: float,
+        limit: int = 6,
+    ) -> list[CitySuggestion]:
+        """
+        Discovers genuine cities and regional localities near the explorer's coordinates.
+        Queries Google Geocoding or Places API to find nearby administrative localities.
+        Never invents nearby-city results or hardcodes random cities.
+        """
+        if not math.isfinite(latitude) or not math.isfinite(longitude):
+            raise ValueError("Coordinates must be valid finite numbers")
+        if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
+            raise ValueError("Coordinates are out of geographic bounds")
+
+        if not self.api_key:
+            return []
+
+        # Check in-memory cache
+        cache_key = f"cities:{round(latitude, 2)}:{round(longitude, 2)}:{limit}"
+        now = time.time()
+        cached = _CITIES_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _PLACES_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        # 1. Reverse Geocode to identify explorer's state / administrative area
+        geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "latlng": f"{latitude},{longitude}",
+            "key": self.api_key,
+            "result_type": "locality|administrative_area_level_2|administrative_area_level_1",
+        }
+
+        current_region = ""
+        current_country = ""
+        try:
+            if self.client:
+                geo_resp = await self.client.get(geocode_url, params=params, timeout=self.timeout_seconds)
+            else:
+                async with httpx.AsyncClient() as client:
+                    geo_resp = await client.get(geocode_url, params=params, timeout=self.timeout_seconds)
+
+            if geo_resp.status_code == 200:
+                geo_data = geo_resp.json()
+                results = geo_data.get("results", [])
+                if isinstance(results, list):
+                    for r in results:
+                        for comp in r.get("address_components", []):
+                            types = comp.get("types", [])
+                            if "administrative_area_level_1" in types and not current_region:
+                                current_region = comp.get("long_name", "")
+                            if "country" in types and not current_country:
+                                current_country = comp.get("long_name", "")
+        except Exception as exc:
+            logger.warning("Geocoding lookup for nearby cities failed: %s", type(exc).__name__)
+
+        # 2. Query Google Places Text Search (New) or searchNearby for localities / cities in the region
+        cities_url = "https://places.googleapis.com/v1/places:searchText"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": self.api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.formattedAddress,places.addressComponents",
+        }
+
+        search_query = f"cities in {current_region}, {current_country}" if current_region else "cities nearby"
+        body = {
+            "textQuery": search_query,
+            "maxResultCount": min(max(limit, 3), 10),
+            "locationBias": {
+                "circle": {
+                    "center": {"latitude": latitude, "longitude": longitude},
+                    "radius": 50000.0,  # 50km
+                }
+            },
+        }
+
+        suggestions: list[CitySuggestion] = []
+        try:
+            if self.client:
+                places_resp = await self.client.post(cities_url, json=body, headers=headers, timeout=self.timeout_seconds)
+            else:
+                async with httpx.AsyncClient() as client:
+                    places_resp = await client.post(cities_url, json=body, headers=headers, timeout=self.timeout_seconds)
+
+            if places_resp.status_code == 200:
+                p_data = places_resp.json()
+                places_list = p_data.get("places", [])
+                if isinstance(places_list, list):
+                    for item in places_list:
+                        name_obj = item.get("displayName", {})
+                        name = name_obj.get("text", "").strip() if isinstance(name_obj, dict) else ""
+                        loc = item.get("location", {})
+                        p_lat = loc.get("latitude") if isinstance(loc, dict) else None
+                        p_lon = loc.get("longitude") if isinstance(loc, dict) else None
+
+                        if not name or p_lat is None or p_lon is None:
+                            continue
+
+                        dist_m = calculate_haversine_distance_meters(latitude, longitude, float(p_lat), float(p_lon))
+                        dist_km = round(dist_m / 1000.0, 1)
+
+                        # Parse region & country from addressComponents if present
+                        p_region = current_region
+                        p_country = current_country
+                        for comp in item.get("addressComponents", []):
+                            c_types = comp.get("types", [])
+                            if "administrative_area_level_1" in c_types:
+                                p_region = comp.get("longText") or comp.get("shortText") or p_region
+                            if "country" in c_types:
+                                p_country = comp.get("longText") or comp.get("shortText") or p_country
+
+                        suggestions.append(
+                            CitySuggestion(
+                                name=name,
+                                region=p_region,
+                                country=p_country,
+                                latitude=float(p_lat),
+                                longitude=float(p_lon),
+                                place_id=item.get("id"),
+                                distance_km=dist_km,
+                            )
+                        )
+        except Exception as exc:
+            logger.warning("Places searchText for nearby cities failed: %s", type(exc).__name__)
+
+        # Sort by distance
+        suggestions.sort(key=lambda s: s.distance_km if s.distance_km is not None else float("inf"))
+        suggestions = suggestions[:limit]
+
+        # Cache result
+        if len(_CITIES_CACHE) >= _PLACES_CACHE_MAX_ENTRIES:
+            _CITIES_CACHE.clear()
+        _CITIES_CACHE[cache_key] = (now, suggestions)
+
+        return suggestions

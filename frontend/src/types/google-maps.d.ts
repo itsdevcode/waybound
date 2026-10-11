@@ -47,9 +47,78 @@ declare namespace google {
       ): void;
     }
 
+    export interface GeocoderAddressComponent {
+      long_name: string;
+      short_name: string;
+      types: string[];
+    }
+
+    export interface GeocoderGeometry {
+      location: {
+        lat(): number;
+        lng(): number;
+      };
+    }
+
+    export interface GeocoderResult {
+      formatted_address: string;
+      place_id?: string;
+      address_components: GeocoderAddressComponent[];
+      geometry?: GeocoderGeometry;
+      types?: string[];
+    }
+
     export class Geocoder {
       constructor();
-      geocode(request: any): Promise<{ results: Array<{ formatted_address: string }> }>;
+      geocode(request: any): Promise<{ results: GeocoderResult[] }>;
+    }
+
+    export namespace places {
+      export interface AutocompletePrediction {
+        description: string;
+        place_id: string;
+        structured_formatting?: {
+          main_text: string;
+          secondary_text: string;
+        };
+        types?: string[];
+      }
+
+      export interface AutocompleteService {
+        getPlacePredictions(
+          request: any,
+          callback: (predictions: AutocompletePrediction[] | null, status: string) => void
+        ): void;
+      }
+
+      export class AutocompleteService {
+        constructor();
+      }
+
+      export interface PlaceResult {
+        formatted_address?: string;
+        name?: string;
+        place_id?: string;
+        geometry?: GeocoderGeometry;
+        address_components?: GeocoderAddressComponent[];
+      }
+
+      export class PlacesService {
+        constructor(attrContainer: HTMLElement | Map);
+        getDetails(
+          request: { placeId: string; fields?: string[]; sessionToken?: any },
+          callback: (result: PlaceResult | null, status: string) => void
+        ): void;
+      }
+
+      export enum PlacesServiceStatus {
+        OK = "OK",
+        ZERO_RESULTS = "ZERO_RESULTS",
+        OVER_QUERY_LIMIT = "OVER_QUERY_LIMIT",
+        REQUEST_DENIED = "REQUEST_DENIED",
+        INVALID_REQUEST = "INVALID_REQUEST",
+        NOT_FOUND = "NOT_FOUND",
+      }
     }
 
     export enum SymbolPath {

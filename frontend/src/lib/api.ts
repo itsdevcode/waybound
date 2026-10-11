@@ -2,6 +2,7 @@ import type {
   ApiErrorPayload,
   NarrationConfigResponse,
   NarrationSynthesizeParams,
+  NearbyCityItem,
   NearbyQuestsResponse,
   ProfileResponse,
   QuestCreateRequest,
@@ -328,6 +329,23 @@ export const api = {
       limit: limit.toString(),
     });
     return request<NearbyQuestsResponse>(`/api/v1/quests/nearby?${params.toString()}`);
+  },
+
+  /**
+   * Location Discovery: Get Genuine Nearby Cities from Region
+   * GET /api/v1/quests/nearby-cities
+   */
+  async getNearbyCities(
+    latitude: number,
+    longitude: number,
+    limit: number = 6
+  ): Promise<NearbyCityItem[]> {
+    const params = new URLSearchParams({
+      latitude: latitude.toString(),
+      longitude: longitude.toString(),
+      limit: limit.toString(),
+    });
+    return request<NearbyCityItem[]>(`/api/v1/quests/nearby-cities?${params.toString()}`);
   },
 
   /**
