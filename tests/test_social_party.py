@@ -149,7 +149,7 @@ async def test_session_logout_and_revocation(client: AsyncClient, db_session: As
 @pytest.mark.asyncio
 async def test_auth_rate_limiting(client: AsyncClient):
     # Reset limiter for test IP
-    auth_rate_limiter.reset("otp_req:127.0.0.1")
+    await auth_rate_limiter.reset("otp_req:127.0.0.1")
     email = f"rate_limit_{uuid.uuid4().hex[:6]}@example.com"
 
     # Rapid requests to trigger rate limit (limit is 10/min)
@@ -159,7 +159,7 @@ async def test_auth_rate_limiting(client: AsyncClient):
         responses.append(r.status_code)
 
     assert 429 in responses
-    auth_rate_limiter.reset("otp_req:127.0.0.1")
+    await auth_rate_limiter.reset("otp_req:127.0.0.1")
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from app.core.security import (
     hash_token,
     verify_otp_hash,
 )
+from app.services.email import EmailDeliveryError, get_email_service
 from app.db.session import get_session
 from app.models.otp import EmailOtp
 from app.models.profile import Profile
@@ -55,8 +56,8 @@ async def request_email_otp(
     db: AsyncSession = Depends(get_session),
 ) -> EmailOtpResponse:
     client_ip = get_client_ip(http_request)
-    auth_rate_limiter.check(f"otp_req:{client_ip}")
-    auth_rate_limiter.check(f"otp_req_email:{request.email.lower()}")
+    await auth_rate_limiter.check(f"otp_req:{client_ip}", db=db)
+    await auth_rate_limiter.check(f"otp_req_email:{request.email.lower()}", db=db)
 
     raw_code = generate_otp_code()
     code_hash = hash_otp(request.email, raw_code)
@@ -71,15 +72,39 @@ async def request_email_otp(
         is_used=False,
     )
     db.add(otp_record)
+    await db.flush()
+
+    # Dispatch via configured transactional email provider (Resend, SMTP, or simulated)
+    email_service = get_email_service()
+    try:
+        await email_service.send_otp_email(to_email=request.email.lower().strip(), otp_code=raw_code)
+    except EmailDeliveryError as exc:
+        logger.error("Transactional email delivery failed for %s", request.email)
+        # Roll back OTP record so failed sends never leave active unusable OTP records in DB
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to dispatch verification code via email provider. Please try again shortly.",
+        ) from exc
+    except Exception as exc:
+        logger.error("Unexpected error during OTP email delivery for %s", request.email)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while dispatching verification code.",
+        ) from exc
+
+    # Only commit after provider confirms successful delivery acceptance
     await db.commit()
 
-    logger.info("Generated proof-of-identity OTP for %s", request.email)
+    logger.info("Successfully dispatched proof-of-identity OTP to %s", request.email)
 
     # In development and test environments, provide simulated_code so automated flows run cleanly
+    # In production, NEVER return OTP code in response, logs, or messages
     simulated = raw_code if settings.environment != "production" else None
 
     return EmailOtpResponse(
-        message="Verification code generated and sent.",
+        message="Verification code sent successfully.",
         email=request.email.lower().strip(),
         expires_in_seconds=settings.otp_expire_minutes * 60,
         simulated_code=simulated,
@@ -99,7 +124,7 @@ async def verify_email_otp(
     db: AsyncSession = Depends(get_session),
 ) -> SessionResponse:
     client_ip = get_client_ip(http_request)
-    auth_rate_limiter.check(f"otp_verify:{client_ip}")
+    await auth_rate_limiter.check(f"otp_verify:{client_ip}", db=db)
 
     email = request.email.lower().strip()
     now = datetime.now(timezone.utc)

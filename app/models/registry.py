@@ -9,10 +9,12 @@ from app.models.party import (
 from app.models.profile import Profile
 from app.models.quest import Quest
 from app.models.quest_step import QuestStep
+from app.models.rate_limit import AuthRateLimitEntry
 from app.models.session import Session
 from app.models.user import User
 
 __all__ = [
+    "AuthRateLimitEntry",
     "EmailOtp",
     "MemberVerification",
     "Party",
