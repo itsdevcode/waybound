@@ -401,7 +401,7 @@ In production, WAYBOUND authenticates explorers using email OTPs and rejects the
 
 ---
 
-### 5. PostgreSQL Connection Pooling on Render
+### 6. PostgreSQL Connection Pooling on Render
 
 Small Render PostgreSQL instances (Free and Starter tiers) enforce strict connection limits (typically 20–50 connections):
 
@@ -415,7 +415,7 @@ Small Render PostgreSQL instances (Free and Starter tiers) enforce strict connec
 
 ---
 
-### 6. Free Tier vs. Paid Tier & Estimated Deployment Costs
+### 7. Free Tier vs. Paid Tier & Estimated Deployment Costs
 
 | Component | Free Tier ($0/mo) | Recommended Production ($21/mo) | Description |
 | --- | --- | --- | --- |
@@ -430,7 +430,7 @@ Small Render PostgreSQL instances (Free and Starter tiers) enforce strict connec
 
 ---
 
-### 7. Post-Deployment Verification & Smoke Tests
+### 8. Post-Deployment Verification & Smoke Tests
 
 After deployment completes in the Render Dashboard:
 
@@ -459,13 +459,27 @@ After deployment completes in the Render Dashboard:
 
 ---
 
+### 9. Deployment Troubleshooting Guide
+
+| Issue / Error Message | Root Cause | Solution |
+| --- | --- | --- |
+| `Production configuration error: CORS_ORIGINS cannot be '*' or empty in production.` | Backend `CORS_ORIGINS` was not set, set to `*`, or left empty in Render Dashboard. | In Render Dashboard -> `waybound-backend` -> Environment, set `CORS_ORIGINS` to your frontend's public HTTPS origin: `https://<your-frontend>.onrender.com` (or your custom domain `https://explorer.yourdomain.com`). |
+| `Production configuration error: CORS origin '...' must use the secure HTTPS protocol.` | Origin was configured with `http://` instead of `https://`. | Change protocol to `https://` in `CORS_ORIGINS`. Production strictly forbids insecure HTTP origins. |
+| `Production configuration error: CORS origin '...' must be an actual public domain with a valid TLD...` | Internal service hostname (e.g. `waybound-frontend`) was supplied instead of the public domain. | Render internal service hostnames only work inside private networking. Enter the public URL with `.onrender.com` or your custom domain TLD. |
+| Frontend API calls fail with `ERR_NAME_NOT_RESOLVED` or network error in browser | `NEXT_PUBLIC_API_URL` was not configured or points to an internal hostname. | In Render Dashboard -> `waybound-frontend` -> Environment, set `NEXT_PUBLIC_API_URL` to `https://<your-backend>.onrender.com`. Then trigger a manual frontend redeploy (`npm run build` bakes this into client bundles). |
+| `Production configuration error: Insecure or unverified EMAIL_FROM address` | Default placeholder `auth@waybound.dev` was left in `EMAIL_FROM`. | Configure a verified sender on your domain or use `WAYBOUND <onboarding@resend.dev>` with your Resend account's registered address. |
+| `npm error code ERESOLVE` during `npm ci` | Mismatch between Node version, `@types/node`, and Vitest peer dependencies. | The repository uses Node 24 LTS and `@types/node: ^24` aligned with `vitest@5.0.3` and `vite@8.3.4`. Ensure `npm ci` is used without `--force` or `--legacy-peer-deps`. |
+| Database connection pool exhausted (`too many connections`) | Too many Uvicorn worker processes or excessive pool limits on Render Starter/Free tier. | Verify `WEB_CONCURRENCY=1`, `DB_POOL_SIZE=5`, and `DB_MAX_OVERFLOW=5` in `waybound-backend` environment variables. |
+
+---
+
 ## Running Full Test Suites
 
 ```bash
-# 1. Backend tests (63 async pytest cases covering Deployment config, ElevenLabs TTS, Auth OTP, Transactional Email, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
+# 1. Backend tests (67 async pytest cases covering Deployment config, ElevenLabs TTS, Auth OTP, Transactional Email, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
 PYTHONPATH=. .venv/bin/pytest tests/ -v
 
-# 2. Frontend tests (46 Vitest cases covering ElevenLabs playback & fallback, Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)
+# 2. Frontend tests (53 Vitest cases covering ElevenLabs playback & fallback, Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)
 cd frontend && npm test
 
 # 3. Frontend Lint and Typecheck
