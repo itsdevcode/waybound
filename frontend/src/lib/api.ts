@@ -86,9 +86,24 @@ export class ApiError extends Error {
 }
 
 function getApiBaseUrl(): string {
-  const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  // Remove trailing slashes
-  return url.replace(/\/+$/, "");
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl !== undefined && envUrl.trim() !== "") {
+    let clean = envUrl.trim().replace(/\/+$/, "");
+    if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+      clean = `https://${clean}`;
+    }
+    return clean;
+  }
+  if (typeof window !== "undefined") {
+    const isLocalhost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "[::1]";
+    if (!isLocalhost) {
+      return "";
+    }
+  }
+  return "http://localhost:8000";
 }
 
 async function request<T>(

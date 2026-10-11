@@ -1,0 +1,88 @@
+# Render Blueprint configuration for WAYBOUND
+# Docs: https://render.com/docs/blueprint-spec
+version: "1"
+
+databases:
+  - name: waybound-db
+    databaseName: waybound
+    user: waybound_user
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  # 1. FastAPI Backend Web Service
+  - type: web
+    name: waybound-backend
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./scripts/start_backend.sh
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: waybound-db
+          property: connectionString
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: ALLOW_DEMO_AUTH
+        value: "false"
+      - key: RATE_LIMIT_STORAGE
+        value: database
+      - key: QUEST_PROVIDER
+        value: demo
+      # Transactional Email Authentication
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_FROM
+        value: WAYBOUND <auth@waybound.dev>
+      - key: RESEND_API_KEY
+        sync: false
+      # External AI / Map Services (Server-Side Only)
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GEMMA_API_KEY
+        sync: false
+      # ElevenLabs Premium Narration (Optional)
+      - key: ELEVENLABS_ENABLED
+        value: "false"
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      # CORS: Allow cross-origin requests from the deployed frontend service
+      - key: CORS_ORIGINS
+        fromService:
+          type: web
+          name: waybound-frontend
+          property: host
+
+  # 2. Next.js Frontend Web Service
+  - type: web
+    name: waybound-frontend
+    runtime: node
+    rootDir: frontend
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      # Public Backend API Target (Baked at build-time & used at runtime)
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: waybound-backend
+          property: host
+      # Internal fallback for Next.js rewrites proxy
+      - key: BACKEND_URL
+        fromService:
+          type: web
+          name: waybound-backend
+          property: host

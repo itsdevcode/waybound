@@ -9,7 +9,38 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
 
     database_url: str = ""
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: float = 30.0
+    db_pool_recycle: int = 1800
+    cors_origins: str = "*"
     verification_radius_meters: float = 100.0
+
+    @property
+    def async_database_url(self) -> str:
+        url = self.database_url
+        if not url:
+            return ""
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        if not self.cors_origins:
+            return ["*"]
+        origins: list[str] = []
+        for o in self.cors_origins.split(","):
+            raw = o.strip()
+            if not raw:
+                continue
+            origins.append(raw)
+            if not raw.startswith("http://") and not raw.startswith("https://") and raw != "*":
+                origins.append(f"https://{raw}")
+                origins.append(f"http://{raw}")
+        return origins if origins else ["*"]
 
     # Provider mode: "demo" or "google_places_gemma"
     quest_provider: str = "demo"
