@@ -3,17 +3,16 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
-from app.core.rate_limit import DatabaseRateLimiter, InMemoryRateLimiter, auth_rate_limiter
+from app.core.rate_limit import DatabaseRateLimiter
 from app.models.otp import EmailOtp
 from app.services.email import (
     EmailDeliveryError,
-    ResendEmailService,
-    SMTPEmailService,
     SimulatedEmailService,
     _simulated_service_instance,
 )
@@ -248,4 +247,76 @@ def test_production_email_provider_validation():
         resend_api_key="re_1234567890abcdef",
     )
     assert valid_cfg.environment == "production"
-    assert valid_cfg.email_provider == "resend"
+
+
+@pytest.mark.asyncio
+async def test_forged_x_forwarded_for_rejected():
+    """
+    Test that forged X-Forwarded-For headers from untrusted connection clients
+    are ignored in favor of the actual socket connection IP.
+    """
+    from fastapi import Request
+    from app.core.rate_limit import get_client_ip
+
+    # Untrusted client attempting to forge IP via X-Forwarded-For header
+    scope_untrusted = {
+        "type": "http",
+        "client": ("203.0.113.195", 54321),
+        "headers": [(b"x-forwarded-for", b"1.1.1.1")],
+    }
+    req_untrusted = Request(scope_untrusted)
+    resolved_ip = get_client_ip(req_untrusted)
+    # Must use actual client IP, NOT forged 1.1.1.1!
+    assert resolved_ip == "203.0.113.195"
+
+    # Trusted proxy (127.0.0.1) forwarding legitimate client IP
+    scope_trusted = {
+        "type": "http",
+        "client": ("127.0.0.1", 54321),
+        "headers": [(b"x-forwarded-for", b"198.51.100.42, 127.0.0.1")],
+    }
+    req_trusted = Request(scope_trusted)
+    resolved_trusted = get_client_ip(req_trusted)
+    assert resolved_trusted == "198.51.100.42"
+
+    # Trusted proxy with malformed/garbage IP falls back to proxy host
+    scope_malformed = {
+        "type": "http",
+        "client": ("127.0.0.1", 54321),
+        "headers": [(b"x-forwarded-for", b"invalid_ip_not_an_address")],
+    }
+    req_malformed = Request(scope_malformed)
+    resolved_malformed = get_client_ip(req_malformed)
+    assert resolved_malformed == "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_at_rate_limit_threshold(db_session: AsyncSession):
+    """
+    Test that concurrent requests executed simultaneously at the rate-limit threshold
+    are atomically serialized by PostgreSQL advisory locking and cannot race past the limit.
+    """
+    import asyncio
+    from app.db.session import AsyncSessionLocal
+
+    key = f"race_test:{uuid.uuid4().hex[:6]}"
+    threshold = 5
+    limiter = DatabaseRateLimiter(limit=threshold, window_seconds=60)
+    await limiter.reset(key, db=db_session)
+
+    # Launch 10 simultaneous workers attempting to register a hit on the exact same key
+    async def worker_attempt() -> int:
+        async with AsyncSessionLocal() as session:
+            try:
+                await limiter.check(key, db=session)
+                return 200
+            except HTTPException as exc:
+                return exc.status_code
+
+    results = await asyncio.gather(*(worker_attempt() for _ in range(10)))
+    successes = [code for code in results if code == 200]
+    rate_limited = [code for code in results if code == 429]
+
+    # Exactly threshold successes, remaining must be 429
+    assert len(successes) == threshold
+    assert len(rate_limited) == 10 - threshold

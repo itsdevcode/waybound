@@ -219,16 +219,23 @@ To test the two-player mystery experience locally using two browser windows (or 
 
 1. **Authentication & Identity Proof**:
    - Unauthenticated creation of sessions via arbitrary client-supplied UUIDs is completely removed.
-   - Explorers authenticate via verified email OTP with HMAC-SHA256 salted hashes and sliding-window rate limiting.
+   - Explorers authenticate via verified email OTP dispatched through configurable transactional email providers (`resend`, `smtp`, or `simulated` for dev/test).
+   - In production, simulated email delivery is strictly rejected at startup; transactional email provider credentials (`RESEND_API_KEY` or `SMTP_HOST`/`SMTP_PASSWORD`) are required and kept strictly server-side.
+   - OTP codes are **never** returned in API responses, logs, or error messages in production.
+   - OTP records are committed only after the email provider confirms successful delivery acceptance, and are automatically rolled back upon provider errors.
+   - Brute-force protection invalidates OTP codes after 5 failed attempts; replay and expired attempts are strictly rejected.
    - Demo sessions are restricted strictly to seeded demo accounts and completely forbidden when `ENVIRONMENT=production` or `ALLOW_DEMO_AUTH=false`.
    - `Settings` automatically validates at startup that `AUTH_SECRET` is at least 32 characters and does not match any default dev secrets when running in production.
-2. **Session Revocation & Logout**:
+2. **Multi-Worker Shared Rate Limiting**:
+   - `RATE_LIMIT_STORAGE=database` coordinates sliding-window rate limiting across multi-process and multi-worker deployments via the `auth_rate_limit_entries` table.
+   - Enforces IP and per-email attempt thresholds returning `429 Too Many Requests` with `Retry-After` headers.
+3. **Session Revocation & Logout**:
    - Active tokens can be explicitly revoked via `POST /api/v1/auth/logout`.
    - Revoked or expired sessions are rejected immediately with 401 Unauthorized.
-3. **Database Concurrency & Row Lock Safety**:
+4. **Database Concurrency & Row Lock Safety**:
    - Cooperative quest generation uses an atomic reservation status (`generating_quest`), immediately releasing database row locks while Google Places and Gemma complete their network requests.
    - Prevents database connection starvation and transaction lock timeouts.
-4. **Data Isolation & Proximity**:
+5. **Data Isolation & Proximity**:
    - Partner clues and raw coordinates are strictly filtered server-side in `PartyService` prior to Pydantic serialization; client bundles never receive partner clues or partner GPS coordinates over the wire.
 
 ---
@@ -236,7 +243,7 @@ To test the two-player mystery experience locally using two browser windows (or 
 ## Running Full Test Suites
 
 ```bash
-# 1. Backend tests (38 async pytest cases covering Auth OTP, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
+# 1. Backend tests (46 async pytest cases covering Auth OTP, Transactional Email, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
 PYTHONPATH=. .venv/bin/pytest tests/ -v
 
 # 2. Frontend tests (40 Vitest cases covering Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)

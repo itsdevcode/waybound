@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # Multi-worker Rate Limiter Storage: "memory" or "database"
     rate_limit_storage: str = "database"
 
+    # Trusted Proxies for X-Forwarded-For evaluation (comma-separated IPs/CIDRs, or empty to only trust direct connection)
+    # Example: "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    trusted_proxies: str = "127.0.0.1,::1"
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if self.environment == "production":
