@@ -23,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className="bg-rpg-stars min-h-screen text-slate-100 antialiased selection:bg-purple-600 selection:text-white">
         <div className="relative min-h-screen flex flex-col justify-between">
           {children}
