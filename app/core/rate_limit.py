@@ -1,5 +1,7 @@
 import abc
+import asyncio
 import ipaddress
+import logging
 import time
 from collections import defaultdict
 from threading import Lock
@@ -11,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.rate_limit import AuthRateLimitEntry
+
+logger = logging.getLogger("waybound.rate_limit")
 
 
 class BaseRateLimiter(abc.ABC):
@@ -67,6 +71,7 @@ class DatabaseRateLimiter(BaseRateLimiter):
     """
     Atomic database-backed sliding window rate limiter shared across multiple workers/nodes.
     Uses PostgreSQL advisory locks keyed on the hashed identifier to eliminate count-then-insert races.
+    Fails safely (fail-closed) on lock failures instead of proceeding unprotected.
     """
 
     def __init__(
@@ -79,28 +84,23 @@ class DatabaseRateLimiter(BaseRateLimiter):
         self.window_seconds = window_seconds
         self.error_detail = error_detail
         self._fallback = InMemoryRateLimiter(limit=limit, window_seconds=window_seconds, error_detail=error_detail)
+        self._async_locks: dict[str, asyncio.Lock] = {}
+        self._locks_guard = asyncio.Lock()
 
-    @override
-    async def check(self, key: str, db: AsyncSession | None = None, detail: str | None = None) -> None:
-        if db is None:
-            await self._fallback.check(key, detail=detail)
-            return
+    async def _get_async_lock(self, key: str) -> asyncio.Lock:
+        async with self._locks_guard:
+            if key not in self._async_locks:
+                self._async_locks[key] = asyncio.Lock()
+            return self._async_locks[key]
 
-        now = time.time()
-        cutoff = now - self.window_seconds
-
-        # Acquire a transaction-level advisory xact lock on a 32-bit integer hash of the rate-limit key.
-        # This serializes concurrent workers checking the exact same key without blocking other keys.
-        # hashtext is a built-in PostgreSQL function producing an int4 hash of any string.
-        try:
-            _ = await db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-                {"lock_key": f"rate_limit:{key}"},
-            )
-        except Exception:
-            # Fall back to table row locking if non-postgres or advisory locks are unavailable
-            pass
-
+    async def _execute_window_check(
+        self,
+        db: AsyncSession,
+        key: str,
+        cutoff: float,
+        now: float,
+        detail: str | None = None,
+    ) -> None:
         # Query recent attempts within the sliding window
         stmt = (
             select(AuthRateLimitEntry.timestamp)
@@ -115,7 +115,6 @@ class DatabaseRateLimiter(BaseRateLimiter):
         if len(timestamps) >= self.limit:
             oldest = timestamps[0]
             retry_after = int(oldest + self.window_seconds - now) + 1
-            # Rollback/commit to release the lock immediately
             await db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -135,6 +134,52 @@ class DatabaseRateLimiter(BaseRateLimiter):
         )
         _ = await db.execute(del_stmt)
         await db.commit()
+
+    @override
+    async def check(self, key: str, db: AsyncSession | None = None, detail: str | None = None) -> None:
+        if db is None:
+            await self._fallback.check(key, detail=detail)
+            return
+
+        now = time.time()
+        cutoff = now - self.window_seconds
+
+        is_postgres = False
+        try:
+            bind = getattr(db, "bind", None)
+            if bind is None and callable(getattr(db, "get_bind", None)):
+                bind = db.get_bind()
+            if bind is not None and hasattr(bind, "dialect") and "postgresql" in bind.dialect.name:
+                is_postgres = True
+        except Exception:
+            pass
+
+        if is_postgres:
+            # Under PostgreSQL, acquire a transaction-level advisory xact lock on a 32-bit integer hash of the key.
+            # Fail closed on lock errors to maintain strict concurrency security.
+            try:
+                _ = await db.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+                    {"lock_key": f"rate_limit:{key}"},
+                )
+            except Exception as exc:
+                logger.error("Failed to acquire PostgreSQL advisory lock for rate limiting: %s", exc)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Rate limiting service temporarily unavailable.",
+                ) from exc
+
+            await self._execute_window_check(db, key, cutoff, now, detail)
+        else:
+            # Non-PostgreSQL dialect (e.g. SQLite during automated tests):
+            # Acquire keyed process-level lock to guarantee concurrency safety without swallowing errors
+            lock = await self._get_async_lock(key)
+            async with lock:
+                await self._execute_window_check(db, key, cutoff, now, detail)
 
     @override
     async def reset(self, key: str, db: AsyncSession | None = None) -> None:
@@ -230,24 +275,38 @@ def get_client_ip(request: Request) -> str:
     """
     Safely resolves the client IP address.
     Never trusts client-supplied X-Forwarded-For headers directly.
-    Only inspects X-Forwarded-For if the actual connecting socket IP (request.client.host)
+    Only inspects proxy headers if the actual connecting socket IP (request.client.host)
     matches a configured trusted proxy or local proxy network.
+
+    When behind a trusted proxy:
+    1. Check X-Real-IP if set by the edge proxy.
+    2. Otherwise traverse X-Forwarded-For from right to left, stripping trusted proxy hops
+       and selecting the rightmost untrusted client IP to prevent client header injection.
     """
     direct_ip = request.client.host if request.client else "unknown_client"
-
-    # Only inspect X-Forwarded-For if the direct connecting client IP is a verified trusted proxy
     trusted_config = str(settings.trusted_proxies).strip()
+
     if direct_ip != "unknown_client" and is_ip_trusted_proxy(direct_ip, trusted_config):
+        # 1. Prefer X-Real-IP if set by a trusted reverse proxy
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            cleaned_real_ip = real_ip.strip()
+            try:
+                _ = ipaddress.ip_address(cleaned_real_ip)
+                return cleaned_real_ip
+            except ValueError:
+                pass
+
+        # 2. Traverse X-Forwarded-For from right to left to find authentic client IP
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            # First IP in X-Forwarded-For is the originating client
-            client_candidate = forwarded.split(",")[0].strip()
-            try:
-                # Validate that client_candidate is a syntactically valid IP address
-                _ = ipaddress.ip_address(client_candidate)
-                return client_candidate
-            except ValueError:
-                # If forged or malformed, fall back to direct connection IP
-                return direct_ip
+            candidates = [p.strip() for p in forwarded.split(",") if p.strip()]
+            for candidate in reversed(candidates):
+                try:
+                    _ = ipaddress.ip_address(candidate)
+                    if not is_ip_trusted_proxy(candidate, trusted_config):
+                        return candidate
+                except ValueError:
+                    continue
 
     return direct_ip

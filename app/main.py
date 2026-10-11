@@ -55,12 +55,12 @@ async def readiness() -> JSONResponse:
             },
         )
     except Exception as exc:
-        logger.error(f"Readiness probe database connection failed: {exc}")
+        logger.error("Readiness probe database connection failed: %s", exc, exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "status": "unhealthy",
                 "database": "disconnected",
-                "error": str(exc),
+                "environment": settings.environment,
             },
         )

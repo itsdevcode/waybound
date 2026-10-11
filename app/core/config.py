@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
 
     database_url: str = ""
-    db_pool_size: int = 10
-    db_max_overflow: int = 20
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
     db_pool_timeout: float = 30.0
     db_pool_recycle: int = 1800
     cors_origins: str = "*"
@@ -30,17 +30,25 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         if not self.cors_origins:
-            return ["*"]
+            return ["*"] if self.environment != "production" else []
         origins: list[str] = []
         for o in self.cors_origins.split(","):
             raw = o.strip()
             if not raw:
                 continue
-            origins.append(raw)
-            if not raw.startswith("http://") and not raw.startswith("https://") and raw != "*":
-                origins.append(f"https://{raw}")
-                origins.append(f"http://{raw}")
-        return origins if origins else ["*"]
+            if raw == "*":
+                if self.environment != "production":
+                    origins.append("*")
+                continue
+            if not raw.startswith("http://") and not raw.startswith("https://"):
+                is_local = raw.startswith("localhost") or raw.startswith("127.0.0.1")
+                if is_local and self.environment != "production":
+                    origins.append(f"http://{raw}")
+                else:
+                    origins.append(f"https://{raw}")
+            else:
+                origins.append(raw)
+        return origins if origins else (["*"] if self.environment != "production" else [])
 
     # Provider mode: "demo" or "google_places_gemma"
     quest_provider: str = "demo"
@@ -135,6 +143,33 @@ class Settings(BaseSettings):
             if self.email_provider.lower().strip() == "smtp" and not self.smtp_host:
                 raise ValueError(
                     "Production configuration error: SMTP_HOST must be provided when EMAIL_PROVIDER is 'smtp'."
+                )
+
+            # In production, CORS_ORIGINS cannot be wildcard or empty; must be explicit HTTPS allowlist
+            raw_cors = self.cors_origins.strip()
+            if not raw_cors or raw_cors == "*" or not self.cors_origins_list or "*" in self.cors_origins_list:
+                raise ValueError(
+                    "Production configuration error: CORS_ORIGINS cannot be '*' or empty in production. Configure an explicit allowlist of HTTPS frontend origins (e.g. 'https://waybound-frontend.onrender.com')."
+                )
+
+            for origin in self.cors_origins_list:
+                if not origin.startswith("https://"):
+                    raise ValueError(
+                        f"Production configuration error: CORS origin '{origin}' must use the secure HTTPS protocol."
+                    )
+
+            # In production, unverified or placeholder sender email is strictly forbidden
+            placeholder_senders = [
+                "waybound <auth@waybound.dev>",
+                "auth@waybound.dev",
+                "example.com",
+                "test@example.com",
+                "placeholder",
+            ]
+            cleaned_from = self.email_from.strip().lower()
+            if not self.email_from or any(p in cleaned_from for p in placeholder_senders):
+                raise ValueError(
+                    "Production configuration error: Insecure or unverified EMAIL_FROM address. You must configure an explicit verified sending address for your domain (e.g. 'WAYBOUND <auth@yourdomain.com>') or Resend's verified sandbox address 'onboarding@resend.dev' before deploying."
                 )
         return self
 
