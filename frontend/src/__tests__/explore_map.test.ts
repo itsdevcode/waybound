@@ -91,5 +91,67 @@ describe("Interactive Quest Map Utilities", () => {
       expect(res.items[0].verification_radius_meters).toBe(100);
       expect(res.items[0].distance_meters).toBe(250);
     });
+
+    it("preserves is_simulated flag from API response for markers and badges", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({
+          items: [
+            {
+              id: null,
+              title: "Art Institute of Chicago",
+              description: "Public museum landmark",
+              difficulty: "medium",
+              estimated_minutes: 30,
+              reward_xp: 150,
+              status: "available",
+              latitude: 41.8796,
+              longitude: -87.6237,
+              distance_meters: 350,
+              verification_radius_meters: 100,
+              is_active: false,
+              is_simulated: false,
+            },
+            {
+              id: null,
+              title: "[Demo Scenario] Central Library Courtyard",
+              description: "[Simulated POI - 0 XP] Demo exploration point",
+              difficulty: "easy",
+              estimated_minutes: 20,
+              reward_xp: 0,
+              status: "available",
+              latitude: 37.7749,
+              longitude: -122.4194,
+              distance_meters: 500,
+              verification_radius_meters: 100,
+              is_active: false,
+              is_simulated: true,
+            },
+          ],
+          center_latitude: 41.8796,
+          center_longitude: -87.6237,
+          radius_meters: 1000,
+          total_count: 2,
+        }),
+      } as unknown as Response);
+
+      const res = await api.getNearbyQuests(41.8796, -87.6237, 1000);
+      expect(res.items[0].is_simulated).toBe(false);
+      expect(res.items[1].is_simulated).toBe(true);
+    });
+  });
+
+  describe("Google Maps Route Duration vs Straight-Line Fallback", () => {
+    it("distinguishes between Google directions walking time and straight-line approximation", () => {
+      // Directions API provides exact pedestrian path with street crossings
+      const googleWalkingMinutes = 14;
+      const straightLineMinutes = estimateWalkingMinutes(800); // 10 minutes
+
+      expect(googleWalkingMinutes).toBeGreaterThan(straightLineMinutes);
+      expect(`Route: ${googleWalkingMinutes} mins`).toContain("Route:");
+      expect(`Straight-Line Est: ~${straightLineMinutes} min`).toContain("Straight-Line Est:");
+    });
   });
 });

@@ -112,6 +112,7 @@ class NearbyQuestItem(BaseModel):
     distance_meters: float = Field(..., ge=0.0, description="Straight-line distance from user in meters")
     verification_radius_meters: float = Field(default=100.0, description="Geofence boundary radius for arrival verification")
     is_active: bool = Field(default=False, description="Whether this is the user's currently active quest")
+    is_simulated: bool = Field(default=False, description="Whether this marker is a simulated demo POI (0 real-world XP)")
 
 
 class NearbyQuestsResponse(BaseModel):

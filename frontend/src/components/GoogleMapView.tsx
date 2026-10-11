@@ -11,6 +11,7 @@ interface GoogleMapViewProps {
   selectedQuest: NearbyQuestItem | null;
   onSelectQuest: (quest: NearbyQuestItem) => void;
   activeQuestGeofenceMeters?: number;
+  onRouteCalculated?: (routeInfo: { distanceText: string; durationText: string; durationMinutes: number } | null) => void;
 }
 
 export function GoogleMapView({
@@ -21,6 +22,7 @@ export function GoogleMapView({
   selectedQuest,
   onSelectQuest,
   activeQuestGeofenceMeters = 100,
+  onRouteCalculated,
 }: GoogleMapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
@@ -244,6 +246,7 @@ export function GoogleMapView({
 
     if (!userLocation || !selectedQuest) {
       directionsRendererRef.current.setDirections({ routes: [] });
+      onRouteCalculated?.(null);
       return;
     }
 
@@ -255,14 +258,26 @@ export function GoogleMapView({
         travelMode: window.google.maps.TravelMode.WALKING,
       },
       (result: google.maps.DirectionsResult | null, status: google.maps.DirectionsStatus) => {
-        if (status === window.google.maps.DirectionsStatus.OK && result) {
+        if (status === window.google.maps.DirectionsStatus.OK && result && result.routes.length > 0) {
           directionsRendererRef.current?.setDirections(result);
+          const firstLeg = result.routes[0].legs[0];
+          if (firstLeg && firstLeg.distance && firstLeg.duration) {
+            const minutes = Math.max(1, Math.round(firstLeg.duration.value / 60));
+            onRouteCalculated?.({
+              distanceText: firstLeg.distance.text,
+              durationText: firstLeg.duration.text,
+              durationMinutes: minutes,
+            });
+          } else {
+            onRouteCalculated?.(null);
+          }
         } else {
           directionsRendererRef.current?.setDirections({ routes: [] });
+          onRouteCalculated?.(null);
         }
       }
     );
-  }, [userLocation, selectedQuest]);
+  }, [userLocation, selectedQuest, onRouteCalculated]);
 
   return (
     <div

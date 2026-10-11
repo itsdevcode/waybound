@@ -61,6 +61,11 @@ export function ExploreMapModal({
   const [nearbyQuests, setNearbyQuests] = useState<NearbyQuestItem[]>([]);
   const [loadingQuests, setLoadingQuests] = useState<boolean>(false);
   const [selectedQuest, setSelectedQuest] = useState<NearbyQuestItem | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{
+    distanceText: string;
+    durationText: string;
+    durationMinutes: number;
+  } | null>(null);
   const [startingQuestId, setStartingQuestId] = useState<string | null>(null);
 
   // Manual City fallback selector
@@ -312,8 +317,12 @@ export function ExploreMapModal({
                 radiusMeters={radiusMeters}
                 quests={nearbyQuests}
                 selectedQuest={selectedQuest}
-                onSelectQuest={setSelectedQuest}
-                activeQuestGeofenceMeters={100}
+                onSelectQuest={(q) => {
+                  setSelectedQuest(q);
+                  setRouteInfo(null);
+                }}
+                activeQuestGeofenceMeters={selectedQuest?.verification_radius_meters || 100}
+                onRouteCalculated={setRouteInfo}
               />
             ) : (
               <RadarMapView
@@ -322,8 +331,11 @@ export function ExploreMapModal({
                 radiusMeters={radiusMeters}
                 quests={nearbyQuests}
                 selectedQuest={selectedQuest}
-                onSelectQuest={setSelectedQuest}
-                activeQuestGeofenceMeters={100}
+                onSelectQuest={(q) => {
+                  setSelectedQuest(q);
+                  setRouteInfo(null);
+                }}
+                activeQuestGeofenceMeters={selectedQuest?.verification_radius_meters || 100}
               />
             )}
 
@@ -371,17 +383,24 @@ export function ExploreMapModal({
               <div className="space-y-3">
                 <div className="p-3.5 rounded-2xl border border-purple-800/50 bg-gradient-to-br from-purple-950/40 to-indigo-950/40 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                        selectedQuest.status === "active"
-                          ? "bg-amber-950/70 border-amber-500/50 text-amber-400"
-                          : selectedQuest.status === "completed"
-                          ? "bg-blue-950/70 border-blue-500/50 text-blue-400"
-                          : "bg-emerald-950/70 border-emerald-500/50 text-emerald-400"
-                      }`}
-                    >
-                      {selectedQuest.status}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                          selectedQuest.status === "active"
+                            ? "bg-amber-950/70 border-amber-500/50 text-amber-400"
+                            : selectedQuest.status === "completed"
+                            ? "bg-blue-950/70 border-blue-500/50 text-blue-400"
+                            : "bg-emerald-950/70 border-emerald-500/50 text-emerald-400"
+                        }`}
+                      >
+                        {selectedQuest.status}
+                      </span>
+                      {selectedQuest.is_simulated && (
+                        <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-purple-950/80 border border-purple-800/50 text-purple-300">
+                          Demo POI
+                        </span>
+                      )}
+                    </div>
                     <span className="text-xs font-semibold text-amber-300 flex items-center gap-1">
                       <Sparkles className="h-3 w-3" />
                       +{selectedQuest.reward_xp} XP
@@ -397,7 +416,7 @@ export function ExploreMapModal({
                     </p>
                   </div>
 
-                  {/* Geofence Status Pill */}
+                  {/* Geofence Status Pill (matches authoritative verification radius) */}
                   <div
                     className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl border text-xs font-medium ${
                       isInsideGeofence
@@ -408,17 +427,23 @@ export function ExploreMapModal({
                     <span className="flex items-center gap-1.5">
                       <Crosshair className="h-3.5 w-3.5" />
                       {isInsideGeofence
-                        ? "Inside Geofence Zone (Ready to Verify)"
-                        : `Outside 100m Zone (${distanceText} away)`}
+                        ? `Inside ${selectedQuest.verification_radius_meters}m Zone (Ready to Verify)`
+                        : `Outside ${selectedQuest.verification_radius_meters}m Zone (${distanceText} away)`}
                     </span>
                     <span className="font-mono text-[11px] font-bold">
                       {distanceText}
                     </span>
                   </div>
 
-                  {/* Walking ETA & External Google Maps Navigation */}
+                  {/* Walking Route ETA: Verified Google Route Duration vs Straight-Line Estimate */}
                   <div className="flex items-center justify-between pt-1 text-xs text-purple-300/70">
-                    <span>Est. Walking: ~{etaMinutes} min</span>
+                    <span>
+                      {routeInfo
+                        ? `Route: ${routeInfo.durationText} (${routeInfo.distanceText})`
+                        : etaMinutes > 0
+                        ? `Straight-Line Est: ~${etaMinutes} min`
+                        : "Distance N/A"}
+                    </span>
                     <a
                       href={getGoogleMapsNavigationUrl(
                         selectedQuest.latitude,

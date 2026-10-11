@@ -112,6 +112,7 @@ export interface NearbyQuestItem {
   distance_meters: number;
   verification_radius_meters: number;
   is_active: boolean;
+  is_simulated?: boolean;
 }
 
 export interface NearbyQuestsResponse {

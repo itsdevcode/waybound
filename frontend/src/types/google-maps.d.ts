@@ -26,8 +26,17 @@ declare namespace google {
       setDirections(result: any): void;
     }
 
+    export interface DirectionsLeg {
+      distance?: { text: string; value: number };
+      duration?: { text: string; value: number };
+    }
+
+    export interface DirectionsRoute {
+      legs: DirectionsLeg[];
+    }
+
     export interface DirectionsResult {
-      routes: any[];
+      routes: DirectionsRoute[];
     }
 
     export class DirectionsService {

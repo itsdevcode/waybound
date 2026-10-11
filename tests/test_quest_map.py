@@ -113,3 +113,90 @@ async def test_nearby_quests_includes_active_user_quest(
     assert active_items[0]["status"] == "active"
     assert active_items[0]["is_active"] is True
 
+
+@pytest.mark.asyncio
+async def test_nearby_quests_google_places_discovery(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
+    """Test that when Google Places provider returns POIs, they are returned with is_simulated=False."""
+    from app.core.config import settings
+    from app.schemas.place import PlaceCandidate
+    from app.services.places import GooglePlacesService
+
+    monkeypatch.setattr(settings, "google_maps_api_key", "test-api-key")
+
+    mock_candidates = [
+        PlaceCandidate(
+            place_id="places_chicago_art_inst",
+            name="Art Institute of Chicago",
+            address="111 S Michigan Ave, Chicago, IL",
+            latitude=41.8796,
+            longitude=-87.6237,
+            primary_type="museum",
+            business_status="OPERATIONAL",
+            distance_meters=150.0,
+        ),
+        PlaceCandidate(
+            place_id="places_millennium_park",
+            name="Millennium Park",
+            address="201 E Randolph St, Chicago, IL",
+            latitude=41.8826,
+            longitude=-87.6226,
+            primary_type="park",
+            business_status="OPERATIONAL",
+            distance_meters=320.0,
+        ),
+    ]
+
+    async def mock_search(self, *args, **kwargs) -> list[PlaceCandidate]:
+        return mock_candidates
+
+    monkeypatch.setattr(GooglePlacesService, "search_nearby_places", mock_search)
+
+    # Center near Chicago Loop
+    res = await client.get(
+        "/api/v1/quests/nearby?latitude=41.88&longitude=-87.625&radius_meters=3000"
+    )
+    assert res.status_code == 200
+    data = res.json()
+
+    assert data["total_count"] == 2
+    assert len(data["items"]) == 2
+    for item in data["items"]:
+        assert item["is_simulated"] is False
+        assert "Simulated POI" not in item["title"]
+        assert item["verification_radius_meters"] == settings.verification_radius_meters
+
+    titles = [item["title"] for item in data["items"]]
+    assert any("Art Institute of Chicago" in t for t in titles)
+    assert any("Millennium Park" in t for t in titles)
+
+
+@pytest.mark.asyncio
+async def test_nearby_quests_provider_failure_falls_back_to_demo(monkeypatch: pytest.MonkeyPatch, client: AsyncClient):
+    """When Google Places provider raises an error or fails, fallback safely to demo destinations labeled as simulated."""
+    from app.core.config import settings
+    from app.services.places import GooglePlacesService
+
+    monkeypatch.setattr(settings, "google_maps_api_key", "test-api-key")
+
+    async def mock_failing_search(self, *args, **kwargs):
+        raise RuntimeError("Google Places API quota exceeded or network timeout")
+
+    monkeypatch.setattr(GooglePlacesService, "search_nearby_places", mock_failing_search)
+
+    # Request near San Francisco where demo locations exist
+    sf_lat = 37.7749
+    sf_lon = -122.4194
+    res = await client.get(
+        f"/api/v1/quests/nearby?latitude={sf_lat}&longitude={sf_lon}&radius_meters=5000"
+    )
+    assert res.status_code == 200
+    data = res.json()
+
+    # Must fall back gracefully to demo destinations and explicitly label them simulated
+    assert data["total_count"] > 0
+    first = data["items"][0]
+    assert first["is_simulated"] is True
+    assert "[Demo Scenario]" in first["title"]
+    assert "0 XP" in first["description"]
+
+
