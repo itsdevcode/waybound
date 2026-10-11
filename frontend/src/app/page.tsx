@@ -9,7 +9,7 @@ import { QuestCompleteModal } from "@/components/QuestCompleteModal";
 import { AuthModal } from "@/components/AuthModal";
 import { PartyLobbyView } from "@/components/PartyLobbyView";
 import { CoopQuestView } from "@/components/CoopQuestView";
-import { GoogleMapView } from "@/components/GoogleMapView";
+import { GoogleMapView, type CalculatedRouteInfo } from "@/components/GoogleMapView";
 import { RadarMapView } from "@/components/RadarMapView";
 import {
   api,
@@ -28,6 +28,8 @@ import type {
   QuestVerificationResponse,
   QuestVerifyRequest,
   NearbyQuestItem,
+  ExplorerType,
+  DifficultyType,
 } from "@/types/api";
 import type {
   PartyResponse,
@@ -45,6 +47,7 @@ import {
 } from "@/lib/maps";
 import {
   getCurrentCoordinates,
+  watchCoordinates,
 } from "@/lib/geo";
 import { getXpProgress, formatDate } from "@/lib/utils";
 import {
@@ -69,6 +72,9 @@ import {
   AlertTriangle,
   RotateCw,
   X,
+  ListOrdered,
+  Plus,
+  Minus,
 } from "lucide-react";
 
 const RADIUS_OPTIONS = [
@@ -127,11 +133,8 @@ export default function HomePage() {
   const [nearbyQuests, setNearbyQuests] = useState<NearbyQuestItem[]>([]);
   const [loadingNearby, setLoadingNearby] = useState<boolean>(false);
   const [selectedQuestItem, setSelectedQuestItem] = useState<NearbyQuestItem | null>(null);
-  const [routeInfo, setRouteInfo] = useState<{
-    distanceText: string;
-    durationText: string;
-    durationMinutes: number;
-  } | null>(null);
+  const [routeInfo, setRouteInfo] = useState<CalculatedRouteInfo | null>(null);
+  const [showDirectionsModal, setShowDirectionsModal] = useState<boolean>(false);
 
   // Search & Filter state for quests list
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -174,6 +177,28 @@ export default function HomePage() {
     }, 0);
     return () => clearTimeout(timer);
   }, [userLocation, acquireLocation]);
+
+  // Continuous Live GPS Tracking as explorer walks in the real world
+  useEffect(() => {
+    if (!userLocation || userLocation.isManual) return;
+    const cleanup = watchCoordinates(
+      (freshCoords) => {
+        setUserLocation((prev) => {
+          if (!prev || prev.isManual) return prev;
+          return {
+            latitude: freshCoords.latitude,
+            longitude: freshCoords.longitude,
+            accuracy: freshCoords.accuracy,
+            isManual: false,
+          };
+        });
+      },
+      (geoErr) => {
+        console.warn("Real-time GPS update notice:", geoErr.message);
+      }
+    );
+    return cleanup;
+  }, [userLocation?.isManual]);
 
   // Fetch Nearby Quests on location or radius change
   const fetchNearby = useCallback(async () => {
@@ -374,6 +399,37 @@ export default function HomePage() {
     setActiveQuest(started);
     setSavedActiveQuestId(started.id);
     void refreshData(userId);
+  }
+
+  async function handleStartAdventure(item: NearbyQuestItem) {
+    if (item.id) {
+      if (item.status === "active" || item.status === "completed") {
+        try {
+          const q = await api.getQuest(item.id);
+          setActiveQuest(q);
+          if (q.status === "active") setSavedActiveQuestId(q.id);
+        } catch {}
+        return;
+      }
+      await handleStartQuest(item.id);
+      return;
+    }
+
+    const durationValue = (item.estimated_minutes === 15 || item.estimated_minutes === 60 ? item.estimated_minutes : 30) as 15 | 30 | 60;
+    const diffValue = (["easy", "medium", "hard"].includes(item.difficulty) ? item.difficulty : "medium") as DifficultyType;
+    const archValue = (profile?.explorer_type && ["discovery", "nature", "fitness", "mystery", "social"].includes(profile.explorer_type)
+      ? profile.explorer_type
+      : "mystery") as ExplorerType;
+
+    const payload: QuestCreateRequest = {
+      user_id: userId,
+      available_minutes: durationValue,
+      explorer_type: archValue,
+      difficulty: diffValue,
+      latitude: item.latitude,
+      longitude: item.longitude,
+    };
+    await handleGenerateQuest(payload);
   }
 
   async function handleUnlockHint(questId: string) {
@@ -635,7 +691,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* 3. Prominent 'Begin Adventure' Golden Button */}
+          {/* 3. Prominent 'Find Adventure' Golden Button */}
           <button
             onClick={() => setSetupModalOpen(true)}
             className="w-full relative group overflow-hidden rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 p-[1px] shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all cursor-pointer"
@@ -643,7 +699,7 @@ export default function HomePage() {
             <div className="flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-[#20150a] via-[#1a1005] to-[#20150a] px-5 py-3.5 transition group-hover:bg-opacity-90">
               <Sparkles className="h-5 w-5 text-amber-400 animate-pulse" />
               <span className="font-extrabold tracking-wider text-amber-200 group-hover:text-amber-100 text-sm uppercase">
-                Begin Adventure
+                Find Adventure
               </span>
               <ChevronRight className="h-4 w-4 text-amber-400 transition-transform group-hover:translate-x-1" />
             </div>
@@ -656,7 +712,7 @@ export default function HomePage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-purple-400/60" />
                 <input
                   type="text"
-                  placeholder="Search nearby mysteries..."
+                  placeholder="Search nearby adventures..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-100 placeholder-purple-400/50 focus:outline-none focus:border-purple-600 transition"
@@ -675,12 +731,12 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* 5. Nearby Quest Cards */}
+          {/* 5. Nearby Adventure Cards */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-purple-200">
               <span className="flex items-center gap-1.5">
                 <Radio className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
-                Nearby Mysteries ({filteredNearbyQuests.length})
+                Nearby Adventures ({filteredNearbyQuests.length})
               </span>
               {loadingNearby && <span className="text-[11px] text-amber-400 animate-pulse">Scanning...</span>}
             </div>
@@ -688,25 +744,28 @@ export default function HomePage() {
             {filteredNearbyQuests.length === 0 ? (
               <div className="rounded-2xl border border-purple-900/40 bg-purple-950/20 p-6 text-center space-y-2">
                 <Compass className="h-8 w-8 text-purple-400/40 mx-auto" />
-                <p className="text-xs text-purple-300 font-semibold">No Quests in Current Radius</p>
+                <p className="text-xs text-purple-300 font-semibold">No Adventures in Current Radius</p>
                 <p className="text-[11px] text-purple-400/60">
-                  Expand your exploration radius or change your search filter to uncover hidden secrets.
+                  Expand your exploration radius or change your search filter to discover real places.
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {filteredNearbyQuests.map((item, idx) => {
                   const isSelected = selectedQuestItem?.title === item.title;
                   const isActive = item.status === "active";
                   const isCompleted = item.status === "completed";
+                  const durationWalk = isSelected && routeInfo
+                    ? routeInfo.durationText
+                    : `~${estimateWalkingMinutes(item.distance_meters)} min walk`;
 
                   return (
                     <div
                       key={item.id || `${item.title}-${idx}`}
                       onClick={() => setSelectedQuestItem(item)}
-                      className={`rounded-xl p-3 border transition cursor-pointer text-left relative overflow-hidden group ${
+                      className={`rounded-2xl p-3.5 border transition cursor-pointer text-left relative overflow-hidden group space-y-2.5 ${
                         isSelected
-                          ? "bg-gradient-to-r from-purple-900/60 via-[#1b143a] to-indigo-950/60 border-amber-500/70 shadow-md shadow-purple-950/50"
+                          ? "bg-gradient-to-r from-purple-900/70 via-[#1e1544] to-indigo-950/70 border-amber-400/80 shadow-lg shadow-purple-950/50"
                           : "bg-purple-950/30 border-purple-900/40 hover:bg-purple-900/30 hover:border-purple-700/50"
                       }`}
                     >
@@ -716,13 +775,17 @@ export default function HomePage() {
                             <h4 className="font-bold text-xs text-white group-hover:text-amber-200 transition">
                               {item.title}
                             </h4>
-                            {item.is_simulated && (
+                            {item.is_simulated ? (
                               <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
                                 Demo POI
                               </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                                Real Landmark
+                              </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-purple-300/70 line-clamp-2">
+                          <p className="text-[11px] text-purple-200/80 line-clamp-2 leading-relaxed">
                             {item.description}
                           </p>
                         </div>
@@ -733,7 +796,7 @@ export default function HomePage() {
                             isActive
                               ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse"
                               : isCompleted
-                              ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                              ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
                               : "bg-purple-900/40 text-purple-300 border-purple-700/40"
                           }`}
                         >
@@ -741,26 +804,41 @@ export default function HomePage() {
                         </span>
                       </div>
 
-                      {/* Quest Meta Chips */}
-                      <div className="mt-2.5 flex items-center justify-between text-[11px] text-purple-300/60 border-t border-purple-900/30 pt-2">
+                      {/* Adventure Meta Chips */}
+                      <div className="flex items-center justify-between text-[11px] text-purple-300/80 border-t border-purple-900/40 pt-2">
                         <div className="flex items-center gap-3">
-                          <span className="capitalize text-amber-300/80 font-medium">
+                          <span className="capitalize text-amber-300 font-semibold">
                             {item.difficulty}
                           </span>
                           <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {item.estimated_minutes}m
+                            <Navigation className="h-3 w-3 text-purple-400" />
+                            {durationWalk}
                           </span>
                           <span className="flex items-center gap-1">
-                            <MapPin className="h-3 w-3" />
+                            <MapPin className="h-3 w-3 text-purple-400" />
                             {item.distance_meters > 1000
                               ? `${(item.distance_meters / 1000).toFixed(1)}km`
                               : `${Math.round(item.distance_meters)}m`}
                           </span>
                         </div>
-                        <span className="font-bold text-amber-400">
-                          +{item.reward_xp} XP
+                        <span className="font-bold text-amber-300">
+                          Reward XP: +{item.reward_xp}
                         </span>
+                      </div>
+
+                      {/* Primary Action: Start Adventure */}
+                      <div className="pt-1 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleStartAdventure(item);
+                          }}
+                          className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-purple-700 via-amber-600 to-amber-500 hover:from-purple-600 hover:to-amber-400 font-bold text-xs text-white shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Play className="h-3.5 w-3.5 fill-current" />
+                          <span>{isActive ? "Continue Adventure" : "Start Adventure"}</span>
+                        </button>
                       </div>
                     </div>
                   );
@@ -903,7 +981,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 3. Floating Map Controls: Radius selector & Recenter */}
+      {/* 3. Floating Map Controls: Radius selector, Zoom & Recenter */}
       <div className="absolute top-3 right-3 z-20 flex flex-col items-end gap-2">
         {/* Radius Pills */}
         <div className="flex rounded-xl bg-[#090814]/90 backdrop-blur-md p-1 border border-purple-800/50 shadow-xl text-[11px] font-bold">
@@ -922,15 +1000,38 @@ export default function HomePage() {
           ))}
         </div>
 
-        {/* Recenter GPS Button */}
-        <button
-          onClick={() => void acquireLocation()}
-          disabled={geoLoading}
-          title="Recenter on Explorer Location"
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#090814]/90 backdrop-blur-md border border-purple-800/50 text-amber-400 hover:text-white hover:border-amber-400 transition shadow-xl cursor-pointer"
-        >
-          <Crosshair className={`h-4 w-4 ${geoLoading ? "animate-spin" : ""}`} />
-        </button>
+        {/* Zoom & Recenter Controls */}
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setRadiusMeters((r) => (r === 5000 ? 2000 : r === 2000 ? 1000 : 500));
+            }}
+            title="Zoom In"
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#090814]/90 backdrop-blur-md border border-purple-800/50 text-purple-200 hover:text-white hover:border-purple-600 transition shadow-xl cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setRadiusMeters((r) => (r === 500 ? 1000 : r === 1000 ? 2000 : 5000));
+            }}
+            title="Zoom Out"
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#090814]/90 backdrop-blur-md border border-purple-800/50 text-purple-200 hover:text-white hover:border-purple-600 transition shadow-xl cursor-pointer"
+          >
+            <Minus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void acquireLocation()}
+            disabled={geoLoading}
+            title="Recenter on Explorer Location"
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#090814]/90 backdrop-blur-md border border-purple-800/50 text-amber-400 hover:text-white hover:border-amber-400 transition shadow-xl cursor-pointer"
+          >
+            <Crosshair className={`h-4 w-4 ${geoLoading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       {/* 4. Floating Bottom Quest Preview Card (When quest is selected) */}
@@ -978,53 +1079,66 @@ export default function HomePage() {
                 <span>
                   {routeInfo
                     ? `${routeInfo.durationText} (${routeInfo.distanceText})`
-                    : `~${estimateWalkingMinutes(selectedQuestItem.distance_meters)} min`}
+                    : `~${estimateWalkingMinutes(selectedQuestItem.distance_meters)} min walk`}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5 text-blue-400" />
-                <span>{selectedQuestItem.estimated_minutes} min quest</span>
+                <span>{selectedQuestItem.estimated_minutes} min adventure</span>
               </div>
               <div className="flex items-center gap-1.5 font-bold text-amber-400">
                 <Trophy className="h-3.5 w-3.5" />
-                <span>+{selectedQuestItem.reward_xp} XP</span>
+                <span>Reward XP: +{selectedQuestItem.reward_xp}</span>
               </div>
             </div>
 
-            {/* Actions: Start Quest & External Directions */}
-            <div className="flex items-center justify-between gap-3 pt-1">
-              <a
-                href={getGoogleMapsNavigationUrl(
-                  selectedQuestItem.latitude,
-                  selectedQuestItem.longitude,
-                  userLocation?.latitude,
-                  userLocation?.longitude
+            {/* Actions: Start Adventure, Accessible Directions & Google Maps */}
+            <div className="flex items-center justify-between gap-3 pt-1 flex-wrap">
+              <div className="flex items-center gap-3">
+                {!selectedQuestItem.is_destination_secret && (
+                  <a
+                    href={getGoogleMapsNavigationUrl(
+                      selectedQuestItem.latitude,
+                      selectedQuestItem.longitude,
+                      userLocation?.latitude,
+                      userLocation?.longitude
+                    )}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-semibold text-purple-300 hover:text-white flex items-center gap-1 transition"
+                  >
+                    <span>Google Maps Route</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
                 )}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-semibold text-purple-300 hover:text-white flex items-center gap-1"
-              >
-                <span>Google Maps Route</span>
-                <ExternalLink className="h-3 w-3" />
-              </a>
 
-              {selectedQuestItem.id ? (
-                <button
-                  onClick={() => handleStartQuest(selectedQuestItem.id!)}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-700 to-amber-600 hover:from-purple-600 hover:to-amber-500 font-bold text-xs text-white shadow-md transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>Start Adventure</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => setSetupModalOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:bg-amber-300 font-bold text-xs text-purple-950 shadow-md transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  <span>Generate AI Quest Here</span>
-                </button>
-              )}
+                {routeInfo?.steps && routeInfo.steps.length > 0 && !selectedQuestItem.is_destination_secret && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDirectionsModal(true)}
+                    className="text-xs font-semibold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ListOrdered className="h-3.5 w-3.5" />
+                    <span>Text Directions</span>
+                  </button>
+                )}
+
+                {selectedQuestItem.is_destination_secret && (
+                  <span className="text-xs font-semibold text-amber-300/90 flex items-center gap-1">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Mystery location sealed until clues solved</span>
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void handleStartAdventure(selectedQuestItem)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-700 via-amber-600 to-amber-500 hover:from-purple-600 hover:to-amber-400 font-bold text-xs text-white shadow-md transition flex items-center gap-1.5 cursor-pointer ml-auto"
+              >
+                <Play className="h-3.5 w-3.5 fill-current" />
+                <span>{selectedQuestItem.status === "active" ? "Continue Adventure" : "Start Adventure"}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1281,6 +1395,60 @@ export default function HomePage() {
           setPendingQuestPayload(null);
         }}
       />
+
+      {/* Accessible Turn-by-Turn Text Directions Modal */}
+      {showDirectionsModal && routeInfo?.steps && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="text-directions-title"
+        >
+          <div className="card-runic w-full max-w-lg rounded-2xl border border-purple-600/50 p-5 space-y-4 max-h-[80vh] overflow-y-auto shadow-2xl">
+            <div className="flex items-center justify-between border-b border-purple-900/40 pb-3">
+              <div className="flex items-center gap-2">
+                <ListOrdered className="h-4 w-4 text-amber-400" />
+                <h3 id="text-directions-title" className="font-bold text-white text-sm">
+                  Walking Directions (Accessible Text)
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowDirectionsModal(false)}
+                className="text-purple-400 hover:text-white p-1 rounded-lg transition"
+                aria-label="Close directions"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="text-xs text-purple-200/90 space-y-1">
+              <p className="font-semibold text-amber-300">
+                Walking Route: {routeInfo.durationText} ({routeInfo.distanceText})
+              </p>
+              <p className="text-[11px] text-purple-300/70">
+                Turn-by-turn pedestrian path instructions from your current GPS position.
+              </p>
+            </div>
+            <ol className="space-y-2.5 text-xs text-slate-100 list-decimal pl-5">
+              {routeInfo.steps.map((st, i) => (
+                <li key={i} className="leading-relaxed">
+                  <span>{st.instructions}</span>
+                  {st.distanceText && (
+                    <span className="ml-1 text-[11px] text-amber-400/80 font-mono">
+                      ({st.distanceText})
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+            <button
+              onClick={() => setShowDirectionsModal(false)}
+              className="btn-primary-rpg w-full py-2.5 rounded-xl text-xs font-bold text-white cursor-pointer"
+            >
+              Close Text Directions
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

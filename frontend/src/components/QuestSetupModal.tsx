@@ -343,10 +343,10 @@ export function QuestSetupModal({
             </div>
             <div>
               <h2 id="setup-modal-title" className="text-base font-bold text-white">
-                Configure Expedition
+                Find Adventure
               </h2>
               <p className="text-xs text-purple-300/70">
-                AI Game Master will tailor your real-world quest
+                Choose your adventure time, style, and starting location
               </p>
             </div>
           </div>
@@ -445,7 +445,7 @@ export function QuestSetupModal({
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-purple-200 flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5 text-amber-400" />
-                Expedition Location
+                Adventure Starting Location
               </span>
               {coords ? (
                 <span
@@ -462,6 +462,10 @@ export function QuestSetupModal({
                 <span className="text-[11px] text-purple-300/60">GPS or City required</span>
               )}
             </div>
+
+            <p className="text-[11px] text-purple-300/70 leading-relaxed">
+              Enable location access to discover real landmarks around you and verify your physical arrival to earn XP.
+            </p>
 
             {/* GPS Acquire / Retry Button */}
             <div className="flex gap-2">
@@ -674,12 +678,12 @@ export function QuestSetupModal({
             {submitting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
-                <span>Summoning Quest Narrative...</span>
+                <span>Finding Adventure...</span>
               </>
             ) : (
               <>
                 <Sparkles className="h-4 w-4 text-amber-300" />
-                <span>Summon Quest</span>
+                <span>Find Adventure</span>
               </>
             )}
           </button>

@@ -227,6 +227,7 @@ client_secrets*.json
 credentials*.json
 token*.json
 *token*.json
+generate_token*.py
 oauth_credentials/
 .oauth/
 secrets/

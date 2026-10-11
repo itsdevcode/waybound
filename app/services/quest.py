@@ -399,6 +399,12 @@ class QuestService:
                     status_mapped = "active" if uq.status == "active" else (
                         "completed" if uq.status == "completed" else "available"
                     )
+                    is_completed = (uq.status == "completed")
+                    # Destination Secrecy: Never expose unrevealed coordinates before arrival & completion
+                    display_lat = dest_lat if is_completed else latitude
+                    display_lon = dest_lon if is_completed else longitude
+                    display_dist = round(dist, 1) if is_completed else 0.0
+
                     nearby_items.append(
                         NearbyQuestItem(
                             id=uq.id,
@@ -408,11 +414,12 @@ class QuestService:
                             estimated_minutes=uq.estimated_minutes,
                             reward_xp=uq.reward_xp,
                             status=status_mapped,
-                            latitude=dest_lat,
-                            longitude=dest_lon,
-                            distance_meters=round(dist, 1),
+                            latitude=display_lat,
+                            longitude=display_lon,
+                            distance_meters=display_dist,
                             verification_radius_meters=settings.verification_radius_meters,
                             is_active=(uq.status == "active"),
+                            is_destination_secret=(not is_completed),
                         )
                     )
 

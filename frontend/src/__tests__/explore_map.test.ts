@@ -154,4 +154,98 @@ describe("Interactive Quest Map Utilities", () => {
       expect(`Straight-Line Est: ~${straightLineMinutes} min`).toContain("Straight-Line Est:");
     });
   });
+
+  describe("Continuous Live GPS Tracking (watchCoordinates)", () => {
+    it("tracks live position updates and clears watch correctly", async () => {
+      const { watchCoordinates } = await import("@/lib/geo");
+
+      const mockClearWatch = vi.fn();
+      const mockWatchPosition = vi.fn().mockImplementation((success) => {
+        // Simulate immediate GPS fix and movement
+        success({
+          coords: {
+            latitude: 37.7749,
+            longitude: -122.4194,
+            accuracy: 12,
+          },
+        });
+        return 999;
+      });
+
+      vi.stubGlobal("navigator", {
+        geolocation: {
+          watchPosition: mockWatchPosition,
+          clearWatch: mockClearWatch,
+        },
+      });
+
+      const positions: Array<{ latitude: number; longitude: number; accuracy: number }> = [];
+      const cleanup = watchCoordinates((coords) => {
+        positions.push(coords);
+      });
+
+      expect(mockWatchPosition).toHaveBeenCalled();
+      expect(positions.length).toBe(1);
+      expect(positions[0].latitude).toBe(37.7749);
+      expect(positions[0].accuracy).toBe(12);
+
+      // Verify unwatch cleanup
+      cleanup();
+      expect(mockClearWatch).toHaveBeenCalledWith(999);
+    });
+  });
+
+  describe("Destination Secrecy & Accessible Route Handling", () => {
+    it("preserves is_destination_secret flag from API for privacy protection", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({
+          items: [
+            {
+              id: "00000000-0000-0000-0000-000000000002",
+              title: "Active Hidden Adventure",
+              description: "Follow clues to uncover this mystery location",
+              difficulty: "medium",
+              estimated_minutes: 30,
+              reward_xp: 150,
+              status: "active",
+              latitude: 37.7749,
+              longitude: -122.4194,
+              distance_meters: 0,
+              verification_radius_meters: 100,
+              is_active: true,
+              is_destination_secret: true,
+            },
+          ],
+          center_latitude: 37.7749,
+          center_longitude: -122.4194,
+          radius_meters: 1000,
+          total_count: 1,
+        }),
+      } as unknown as Response);
+
+      const res = await api.getNearbyQuests(37.7749, -122.4194, 1000);
+      expect(res.items[0].is_destination_secret).toBe(true);
+      expect(res.items[0].is_active).toBe(true);
+    });
+
+    it("formats accessible turn-by-turn text steps without HTML tags", () => {
+      const rawSteps = [
+        { instructions: "Head <b>north</b> on Market St toward 4th St", distance: { text: "0.2 mi" } },
+        { instructions: "Turn <b>right</b> onto 4th St", distance: { text: "350 ft" } },
+      ];
+
+      const cleanedSteps = rawSteps.map((s) => ({
+        instructions: s.instructions.replace(/<[^>]+>/g, " ").trim(),
+        distanceText: s.distance.text,
+      }));
+
+      expect(cleanedSteps[0].instructions).toBe("Head  north  on Market St toward 4th St");
+      expect(cleanedSteps[0].instructions).not.toContain("<b>");
+      expect(cleanedSteps[1].instructions).toBe("Turn  right  onto 4th St");
+      expect(cleanedSteps[1].distanceText).toBe("350 ft");
+    });
+  });
 });

@@ -103,6 +103,47 @@ export async function getCurrentCoordinates(): Promise<GeoCoordinates> {
   });
 }
 
+/**
+ * Tracks live physical coordinates continuously as the explorer moves.
+ * Returns an unwatch cleanup callback.
+ */
+export function watchCoordinates(
+  onSuccess: (coords: GeoCoordinates) => void,
+  onError?: (error: GeolocationError) => void
+): () => void {
+  if (typeof window === "undefined" || !("geolocation" in navigator)) {
+    return () => {};
+  }
+
+  const watchId = navigator.geolocation.watchPosition(
+    (position) => {
+      onSuccess({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+      });
+    },
+    (err) => {
+      if (onError) {
+        let kind: GeoErrorKind = "UNKNOWN";
+        if (err.code === err.PERMISSION_DENIED) kind = "PERMISSION_DENIED";
+        else if (err.code === err.POSITION_UNAVAILABLE) kind = "POSITION_UNAVAILABLE";
+        else if (err.code === err.TIMEOUT) kind = "TIMEOUT";
+        onError(new GeolocationError(kind, err.message || "Position tracking failed."));
+      }
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 3000,
+    }
+  );
+
+  return () => {
+    navigator.geolocation.clearWatch(watchId);
+  };
+}
+
 export interface CityPreset {
   name: string;
   region: string;
