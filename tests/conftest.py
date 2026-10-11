@@ -20,7 +20,7 @@ from app.main import app
 from app.models.profile import Profile
 from app.models.user import User
 
-# Enforce isolated test settings (simulated email provider so tests don't attempt live external SMTP/API calls)
+# Default email provider to simulated during test runs to isolate external network/SMTP calls
 settings.email_provider = "simulated"
 
 

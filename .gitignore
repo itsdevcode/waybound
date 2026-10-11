@@ -220,3 +220,14 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .vscode/
+
+# Google OAuth credentials, client secrets, and developer token files
+client_secret*.json
+client_secrets*.json
+credentials*.json
+token*.json
+*token*.json
+oauth_credentials/
+.oauth/
+secrets/
+
