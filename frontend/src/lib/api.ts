@@ -7,9 +7,40 @@ import type {
   QuestVerificationResponse,
   QuestVerifyRequest,
 } from "@/types/api";
+import type {
+  AuthMeResponse,
+  PartyCreateRequest,
+  PartyJoinRequest,
+  PartyResponse,
+  PartyStartQuestRequest,
+  PartyVerificationResponse,
+  PartyVerifyRequest,
+  SessionResponse,
+  SharedPartyQuestResponse,
+} from "@/types/party";
 
 export const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001";
 const USER_STORAGE_KEY = "waybound_explorer_user_id";
+const AUTH_TOKEN_KEY = "waybound_session_token";
+
+export function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string | null): void {
+  if (typeof window !== "undefined") {
+    if (token) {
+      localStorage.setItem(AUTH_TOKEN_KEY, token.trim());
+    } else {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  }
+}
+
+export function removeAuthToken(): void {
+  setAuthToken(null);
+}
 
 export function getActiveUserId(): string {
   if (typeof window === "undefined") return DEFAULT_USER_ID;
@@ -71,6 +102,11 @@ async function request<T>(
   }
   if (!headers.has("Accept")) {
     headers.set("Accept", "application/json");
+  }
+
+  const token = getAuthToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   let attempt = 0;
@@ -232,5 +268,110 @@ export const api = {
     return request<QuestResponse>(`/api/v1/quests/${encodeURIComponent(questId)}/abandon`, {
       method: "POST",
     });
+  },
+
+  /**
+   * Phase 4B: Authentication & Identity
+   */
+  auth: {
+    async createSession(userId: string): Promise<SessionResponse> {
+      const res = await request<SessionResponse>("/api/v1/auth/session", {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId }),
+      });
+      if (res?.token) {
+        setAuthToken(res.token);
+      }
+      return res;
+    },
+
+    async getMe(): Promise<AuthMeResponse> {
+      return request<AuthMeResponse>("/api/v1/auth/me");
+    },
+  },
+
+  /**
+   * Phase 4B: Social Mystery Partner / Parties
+   */
+  parties: {
+    async create(payload: PartyCreateRequest): Promise<PartyResponse> {
+      return request<PartyResponse>("/api/v1/parties", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+
+    async join(payload: PartyJoinRequest): Promise<PartyResponse> {
+      return request<PartyResponse>("/api/v1/parties/join", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+
+    async listMine(): Promise<PartyResponse[]> {
+      return request<PartyResponse[]>("/api/v1/parties/mine");
+    },
+
+    async get(partyId: string): Promise<PartyResponse> {
+      return request<PartyResponse>(`/api/v1/parties/${encodeURIComponent(partyId)}`);
+    },
+
+    async leave(partyId: string): Promise<PartyResponse> {
+      return request<PartyResponse>(`/api/v1/parties/${encodeURIComponent(partyId)}/leave`, {
+        method: "POST",
+      });
+    },
+
+    async disband(partyId: string): Promise<PartyResponse> {
+      return request<PartyResponse>(`/api/v1/parties/${encodeURIComponent(partyId)}/disband`, {
+        method: "POST",
+      });
+    },
+
+    async setConsent(partyId: string, consent: boolean): Promise<PartyResponse> {
+      return request<PartyResponse>(`/api/v1/parties/${encodeURIComponent(partyId)}/consent`, {
+        method: "POST",
+        body: JSON.stringify({ consent }),
+      });
+    },
+
+    async startQuest(
+      partyId: string,
+      payload: PartyStartQuestRequest
+    ): Promise<SharedPartyQuestResponse> {
+      return request<SharedPartyQuestResponse>(
+        `/api/v1/parties/${encodeURIComponent(partyId)}/quest/start`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      );
+    },
+
+    async getSharedQuest(partyId: string): Promise<SharedPartyQuestResponse> {
+      return request<SharedPartyQuestResponse>(`/api/v1/parties/${encodeURIComponent(partyId)}/quest`);
+    },
+
+    async unlockClue(partyId: string, clueId: string): Promise<SharedPartyQuestResponse> {
+      return request<SharedPartyQuestResponse>(
+        `/api/v1/parties/${encodeURIComponent(partyId)}/clues/${encodeURIComponent(clueId)}/unlock`,
+        {
+          method: "POST",
+        }
+      );
+    },
+
+    async verifyArrival(
+      partyId: string,
+      payload: PartyVerifyRequest
+    ): Promise<PartyVerificationResponse> {
+      return request<PartyVerificationResponse>(
+        `/api/v1/parties/${encodeURIComponent(partyId)}/quest/verify`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      );
+    },
   },
 };

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     gemma_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     gemma_timeout_seconds: float = 30.0
     gemma_max_retries: int = 3
+    # Security and Session Configuration
+    auth_secret: str = "waybound_dev_insecure_auth_secret_must_change_in_production"
+    session_token_expire_days: int = 30
+    party_invite_expire_hours: int = 48
 
     model_config = SettingsConfigDict(
         env_file=".env",

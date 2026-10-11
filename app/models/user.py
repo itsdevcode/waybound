@@ -10,8 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.party import PartyMembership
     from app.models.profile import Profile
     from app.models.quest import Quest
+    from app.models.session import Session
 
 class User(Base):
     __tablename__ = "users"
@@ -49,6 +51,14 @@ class User(Base):
         uselist=False,
     )
     quests: Mapped[list["Quest"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    sessions: Mapped[list["Session"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    party_memberships: Mapped[list["PartyMembership"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )

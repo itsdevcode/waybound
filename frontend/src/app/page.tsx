@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Header } from "@/components/Header";
 import { ProfileCard } from "@/components/ProfileCard";
 import { QuestHistoryCard } from "@/components/QuestHistoryCard";
@@ -9,6 +9,8 @@ import { ActiveQuestView } from "@/components/ActiveQuestView";
 import { QuestVerifyModal } from "@/components/QuestVerifyModal";
 import { QuestCompleteModal } from "@/components/QuestCompleteModal";
 import { UserModal } from "@/components/UserModal";
+import { PartyLobbyView } from "@/components/PartyLobbyView";
+import { CoopQuestView } from "@/components/CoopQuestView";
 import {
   api,
   ApiError,
@@ -23,7 +25,22 @@ import type {
   QuestVerificationResponse,
   QuestVerifyRequest,
 } from "@/types/api";
-import { AlertTriangle, RefreshCw, Compass, UserX, AlertCircle } from "lucide-react";
+import type {
+  PartyResponse,
+  PartyCreateRequest,
+  PartyJoinRequest,
+  PartyStartQuestRequest,
+  SharedPartyQuestResponse,
+  PartyVerificationResponse,
+} from "@/types/party";
+import {
+  AlertTriangle,
+  RefreshCw,
+  Compass,
+  UserX,
+  AlertCircle,
+  Users,
+} from "lucide-react";
 
 export default function HomePage() {
   const [userId, setUserId] = useState<string>(() => {
@@ -33,9 +50,19 @@ export default function HomePage() {
     return "";
   });
 
+  // Mode: Solo Expedition vs Mystery Fellowship (2-Player)
+  const [mode, setMode] = useState<"solo" | "coop">("solo");
+
+  // Solo State
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [quests, setQuests] = useState<QuestResponse[]>([]);
   const [activeQuest, setActiveQuest] = useState<QuestResponse | null>(null);
+
+  // Cooperative / Party State
+  const [party, setParty] = useState<PartyResponse | null>(null);
+  const [myParties, setMyParties] = useState<PartyResponse[]>([]);
+  const [coopQuest, setCoopQuest] = useState<SharedPartyQuestResponse | null>(null);
+  const [viewingCoopQuest, setViewingCoopQuest] = useState<boolean>(false);
 
   // Loading and fine-grained error states
   const [loading, setLoading] = useState<boolean>(true);
@@ -48,6 +75,53 @@ export default function HomePage() {
   const [verifyModalOpen, setVerifyModalOpen] = useState<boolean>(false);
   const [userModalOpen, setUserModalOpen] = useState<boolean>(false);
   const [completeResult, setCompleteResult] = useState<QuestVerificationResponse | null>(null);
+
+  // Ref to track active party for polling without stale closure
+  const activePartyIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activePartyIdRef.current = party?.id || null;
+  }, [party]);
+
+  // Ensure authenticated session and refresh parties
+  const syncPartyData = useCallback(async (targetUserId?: string) => {
+    const idToFetch = targetUserId || userId || getActiveUserId();
+    if (!idToFetch) return;
+
+    try {
+      // 1. Establish verified session token
+      await api.auth.createSession(idToFetch);
+
+      // 2. Fetch explorer's fellowships
+      const partiesList = await api.parties.listMine();
+      setMyParties(partiesList);
+
+      // 3. Check if there's an ongoing party
+      const currentActive = partiesList.find(
+        (p) => p.status === "open" || p.status === "active"
+      );
+
+      if (currentActive) {
+        setParty(currentActive);
+        if (currentActive.has_active_quest) {
+          try {
+            const sharedQ = await api.parties.getSharedQuest(currentActive.id);
+            setCoopQuest(sharedQ);
+          } catch {
+            setCoopQuest(null);
+          }
+        } else {
+          setCoopQuest(null);
+          setViewingCoopQuest(false);
+        }
+      } else {
+        setParty(null);
+        setCoopQuest(null);
+        setViewingCoopQuest(false);
+      }
+    } catch {
+      // Silently handle if party service is not initialized yet
+    }
+  }, [userId]);
 
   // Manual refresh callback
   const refreshData = useCallback(async (targetUserId?: string) => {
@@ -102,23 +176,24 @@ export default function HomePage() {
       } else {
         const err = questsRes.reason;
         if (err instanceof ApiError && err.status === 404) {
-          // User not found in quest history
           setQuests([]);
         } else if (err instanceof ApiError && (err.status === 0 || err.status === 408 || err.status >= 500)) {
           if (!isConnError) {
-            // Profile succeeded, but quests failed due to server/network
             setQuestsError("Could not load quest history from the server. Your explorer profile was preserved.");
           }
         } else {
           setQuestsError("Failed to fetch quest history.");
         }
       }
+
+      // Sync party state
+      await syncPartyData(idToFetch);
     } catch (err: unknown) {
       setConnectionError((err as Error)?.message || "Unexpected error communicating with backend.");
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, syncPartyData]);
 
   // Initial fetch on mount & identity change
   useEffect(() => {
@@ -175,32 +250,29 @@ export default function HomePage() {
           }
         }
 
-        // 3. RESTORE DRAFT / ACTIVE QUEST ON REFRESH WITHOUT AUTOMATICALLY RESTARTING OR MUTATING IT
+        // 3. Restore draft/active solo quest on refresh
         const savedQuestId = getSavedActiveQuestId();
         if (savedQuestId) {
           const existingInList = loadedQuests.find((q) => q.id === savedQuestId);
           if (existingInList && (existingInList.status === "draft" || existingInList.status === "active")) {
-            // Restore existing quest state as-is
             setActiveQuest(existingInList);
           } else {
-            // Fetch directly from server if not found in first page or verify status
             try {
               const freshQuest = await api.getQuest(savedQuestId);
               if (isMounted && (freshQuest.status === "draft" || freshQuest.status === "active")) {
                 setActiveQuest(freshQuest);
-              } else {
-                setSavedActiveQuestId(null);
               }
             } catch {
               setSavedActiveQuestId(null);
             }
           }
         }
+
+        // 4. Sync party data
+        await syncPartyData(currentId);
       } catch (err: unknown) {
         if (isMounted) {
-          setConnectionError(
-            (err as Error)?.message || "Unable to connect to WAYBOUND backend server."
-          );
+          setConnectionError((err as Error)?.message || "Failed to communicate with backend.");
         }
       } finally {
         if (isMounted) {
@@ -214,68 +286,154 @@ export default function HomePage() {
     return () => {
       isMounted = false;
     };
-  }, [userId]);
+  }, [userId, syncPartyData]);
 
-  // Handle Quest Generation
+  // Periodic polling for party mode (every 4 seconds) to detect partner joining/verifying
+  useEffect(() => {
+    if (mode !== "coop" || !party) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const partyId = activePartyIdRef.current;
+        if (!partyId) return;
+
+        const updatedParty = await api.parties.get(partyId);
+        setParty(updatedParty);
+
+        if (updatedParty.has_active_quest) {
+          const sharedQ = await api.parties.getSharedQuest(partyId);
+          setCoopQuest(sharedQ);
+        }
+      } catch {
+        // Ignore background polling glitches
+      }
+    }, 4000);
+
+    return () => clearInterval(intervalId);
+  }, [mode, party]);
+
+  // Solo quest handlers
   async function handleGenerateQuest(payload: QuestCreateRequest) {
-    const newQuest = await api.generateQuest(payload);
-    setActiveQuest(newQuest);
-    setSavedActiveQuestId(newQuest.id);
-    await refreshData(userId);
+    const generated = await api.generateQuest(payload);
+    setActiveQuest(generated);
+    setSavedActiveQuestId(generated.id);
+    void refreshData(userId);
   }
 
-  // Handle Start Quest (draft -> active)
   async function handleStartQuest(questId: string) {
     const started = await api.startQuest(questId);
     setActiveQuest(started);
     setSavedActiveQuestId(started.id);
-    await refreshData(userId);
-  }
-
-  // Handle Unlock Next Clue
-  async function handleUnlockHint(questId: string) {
-    const res = await api.unlockHint(questId);
-    setActiveQuest(res.quest);
-    setSavedActiveQuestId(res.quest.id);
-    await refreshData(userId);
-  }
-
-  // Handle Abandon Quest
-  async function handleAbandonQuest(questId: string) {
-    await api.abandonQuest(questId);
-    setActiveQuest(null);
-    setSavedActiveQuestId(null);
-    await refreshData(userId);
-  }
-
-  // Handle Verify Quest
-  async function handleVerifyQuest(payload: QuestVerifyRequest): Promise<QuestVerificationResponse> {
-    if (!activeQuest) {
-      throw new Error("No active quest selected for verification.");
-    }
-    return api.verifyQuest(activeQuest.id, payload);
-  }
-
-  // Handle Successful Verification
-  function handleVerificationSuccess(result: QuestVerificationResponse) {
-    setActiveQuest(result.quest);
-    setSavedActiveQuestId(null); // Quest is completed, clear active storage
-    setCompleteResult(result);
     void refreshData(userId);
   }
 
-  function handleSelectQuestFromJournal(quest: QuestResponse) {
-    setActiveQuest(quest);
-    if (quest.status === "draft" || quest.status === "active") {
-      setSavedActiveQuestId(quest.id);
+  async function handleUnlockHint(questId: string) {
+    const res = await api.unlockHint(questId);
+    setActiveQuest(res.quest);
+  }
+
+  async function handleVerifyQuest(questId: string, payload: QuestVerifyRequest) {
+    return api.verifyQuest(questId, payload);
+  }
+
+  function handleVerificationSuccess(res: QuestVerificationResponse) {
+    setCompleteResult(res);
+    setActiveQuest(res.quest);
+    setSavedActiveQuestId(null);
+    void refreshData(userId);
+  }
+
+  async function handleAbandonQuest(questId: string) {
+    const abandoned = await api.abandonQuest(questId);
+    setActiveQuest(abandoned);
+    setSavedActiveQuestId(null);
+    void refreshData(userId);
+  }
+
+  function handleSelectQuestFromJournal(q: QuestResponse) {
+    setActiveQuest(q);
+    if (q.status === "draft" || q.status === "active") {
+      setSavedActiveQuestId(q.id);
     } else {
       setSavedActiveQuestId(null);
     }
   }
 
+  // Party handlers
+  async function handleCreateParty(payload: PartyCreateRequest) {
+    const newParty = await api.parties.create(payload);
+    setParty(newParty);
+    setCoopQuest(null);
+    setViewingCoopQuest(false);
+    void syncPartyData(userId);
+    return newParty;
+  }
+
+  async function handleJoinParty(payload: PartyJoinRequest) {
+    const joined = await api.parties.join(payload);
+    setParty(joined);
+    setCoopQuest(null);
+    setViewingCoopQuest(false);
+    void syncPartyData(userId);
+    return joined;
+  }
+
+  async function handleLeaveParty(partyId: string) {
+    await api.parties.leave(partyId);
+    setParty(null);
+    setCoopQuest(null);
+    setViewingCoopQuest(false);
+    void syncPartyData(userId);
+  }
+
+  async function handleDisbandParty(partyId: string) {
+    await api.parties.disband(partyId);
+    setParty(null);
+    setCoopQuest(null);
+    setViewingCoopQuest(false);
+    void syncPartyData(userId);
+  }
+
+  async function handleSetConsent(partyId: string, consent: boolean) {
+    const updated = await api.parties.setConsent(partyId, consent);
+    setParty(updated);
+  }
+
+  async function handleStartPartyQuest(partyId: string, payload: PartyStartQuestRequest) {
+    const started = await api.parties.startQuest(partyId, payload);
+    setCoopQuest(started);
+    setViewingCoopQuest(true);
+    const updatedParty = await api.parties.get(partyId);
+    setParty(updatedParty);
+  }
+
+  async function handleUnlockPartyClue(partyId: string, clueId: string) {
+    const updated = await api.parties.unlockClue(partyId, clueId);
+    setCoopQuest(updated);
+  }
+
+  async function handleVerifyPartyArrival(
+    partyId: string,
+    coords: { latitude: number; longitude: number },
+    answer: string
+  ): Promise<PartyVerificationResponse> {
+    const res = await api.parties.verifyArrival(partyId, {
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      observation_answer: answer,
+    });
+    // refresh party quest
+    const updated = await api.parties.getSharedQuest(partyId);
+    setCoopQuest(updated);
+    void refreshData(userId);
+    return res;
+  }
+
+  const isHost = party ? party.host_id === userId : false;
+
   return (
-    <div className="flex flex-col min-h-screen">
-      {/* Sticky Header */}
+    <div className="min-h-screen bg-[#07040d] text-purple-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
+      {/* Top Header */}
       <Header
         profile={profile}
         loading={loading}
@@ -284,7 +442,33 @@ export default function HomePage() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-md sm:max-w-lg mx-auto px-4 py-5 space-y-5">
+      <main className="flex-1 w-full max-w-md sm:max-w-lg mx-auto px-4 py-4 space-y-4">
+        {/* Mode Switch: Solo Expedition vs Mystery Fellowship */}
+        <div className="flex rounded-xl bg-purple-950/60 p-1 border border-purple-900/60 text-xs shadow-md">
+          <button
+            onClick={() => setMode("solo")}
+            className={`flex-1 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              mode === "solo"
+                ? "bg-gradient-to-r from-purple-800 to-purple-900 text-amber-300 shadow border border-purple-700/60"
+                : "text-purple-400 hover:text-purple-200"
+            }`}
+          >
+            <Compass className="h-3.5 w-3.5 text-amber-400" />
+            <span>Solo Expedition</span>
+          </button>
+          <button
+            onClick={() => setMode("coop")}
+            className={`flex-1 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              mode === "coop"
+                ? "bg-gradient-to-r from-purple-800 to-purple-900 text-amber-300 shadow border border-purple-700/60"
+                : "text-purple-400 hover:text-purple-200"
+            }`}
+          >
+            <Users className="h-3.5 w-3.5 text-amber-400" />
+            <span>Mystery Fellowship</span>
+          </button>
+        </div>
+
         {/* 1. Backend Connection Error Banner */}
         {connectionError && (
           <div className="rounded-2xl bg-red-950/60 border border-red-800/70 p-4 space-y-2.5 animate-in fade-in">
@@ -308,7 +492,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* 2. Missing Demo User Banner (Clear distinction from network error) */}
+        {/* 2. Missing Demo User Banner */}
         {userNotFoundError && !connectionError && (
           <div className="rounded-2xl bg-amber-950/50 border border-amber-600/60 p-4 space-y-3 animate-in fade-in">
             <div className="flex items-start gap-2.5">
@@ -332,7 +516,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* 3. Partial Failure Warning: Quests Error while Profile Loaded */}
+        {/* 3. Partial Failure Warning: Quests Error */}
         {questsError && !connectionError && (
           <div className="rounded-xl bg-purple-950/40 border border-purple-800/60 p-3 text-xs text-purple-200 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -348,8 +532,62 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* View Switch: Active Quest View OR Dashboard */}
-        {activeQuest ? (
+        {/* --- VIEW SWITCHER --- */}
+        {mode === "coop" ? (
+          viewingCoopQuest && coopQuest && party ? (
+            <CoopQuestView
+              partyId={party.id}
+              quest={coopQuest}
+              onBack={() => setViewingCoopQuest(false)}
+              onRefresh={async () => {
+                if (!party) return;
+                const freshParty = await api.parties.get(party.id);
+                setParty(freshParty);
+                if (freshParty.has_active_quest) {
+                  const freshQuest = await api.parties.getSharedQuest(party.id);
+                  setCoopQuest(freshQuest);
+                }
+              }}
+              onUnlockClue={handleUnlockPartyClue}
+              onVerifyArrival={handleVerifyPartyArrival}
+              onLeaveParty={handleLeaveParty}
+              onDisbandParty={handleDisbandParty}
+              isHost={isHost}
+            />
+          ) : (
+            <PartyLobbyView
+              currentUserId={userId}
+              party={party}
+              onRefreshParty={async () => {
+                if (!party) return;
+                const fresh = await api.parties.get(party.id);
+                setParty(fresh);
+                if (fresh.has_active_quest) {
+                  const freshQ = await api.parties.getSharedQuest(fresh.id);
+                  setCoopQuest(freshQ);
+                }
+              }}
+              onCreateParty={handleCreateParty}
+              onJoinParty={handleJoinParty}
+              onLeaveParty={handleLeaveParty}
+              onDisbandParty={handleDisbandParty}
+              onSetConsent={handleSetConsent}
+              onStartQuest={handleStartPartyQuest}
+              onOpenQuest={() => setViewingCoopQuest(true)}
+              myParties={myParties}
+              onSelectParty={async (pId) => {
+                const selected = await api.parties.get(pId);
+                setParty(selected);
+                if (selected.has_active_quest) {
+                  const q = await api.parties.getSharedQuest(pId);
+                  setCoopQuest(q);
+                  setViewingCoopQuest(true);
+                }
+              }}
+            />
+          )
+        ) : activeQuest ? (
+          /* Solo Active Quest View */
           <ActiveQuestView
             quest={activeQuest}
             onBack={() => {
@@ -362,8 +600,8 @@ export default function HomePage() {
             onAbandonQuest={handleAbandonQuest}
           />
         ) : (
+          /* Solo Dashboard */
           <div className="space-y-5 animate-in fade-in duration-200">
-            {/* Explorer Profile Card */}
             <ProfileCard
               profile={profile}
               loading={loading}
@@ -371,7 +609,6 @@ export default function HomePage() {
               onSelectUser={() => setUserModalOpen(true)}
             />
 
-            {/* Quest History Journal (Handles legitimate empty history gracefully) */}
             <QuestHistoryCard
               quests={quests}
               loading={loading}
@@ -389,7 +626,7 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* Modals */}
+      {/* Solo Modals */}
       <QuestSetupModal
         userId={userId}
         isOpen={setupModalOpen}
@@ -402,7 +639,7 @@ export default function HomePage() {
           quest={activeQuest}
           isOpen={verifyModalOpen}
           onClose={() => setVerifyModalOpen(false)}
-          onVerify={handleVerifyQuest}
+          onVerify={(payload) => handleVerifyQuest(activeQuest.id, payload)}
           onSuccess={handleVerificationSuccess}
         />
       )}

@@ -160,12 +160,84 @@ Follow these steps to demonstrate the full hackathon MVP experience:
 
 ---
 
+- **Voice Game Master (Phase 4A)**:
+  - Spoken AI Game Master using Web Speech API with destination secrecy enforcement.
+- **Social Mystery Partner (Phase 4B)**:
+  - Two-player cooperative mystery quests with split, complementary clues.
+  - Server-side authenticated sessions (Bearer tokens) eliminating client-supplied UUID spoofing.
+  - Strict two-member party constraint enforced via atomic database transactions and constraints.
+  - Opaque, cryptographically secure invitation tokens (SHA-256 hashed on server, expiring after 24 hours).
+  - Clue isolation: Explorers only receive their assigned split clues; partner's clues are never returned or narrated.
+  - Server-side independent GPS arrival verification without disclosing raw coordinates or live location to the partner.
+  - Nicknames by default; mutual consent required to reveal real explorer identities.
+  - Anti-exploit XP safety rule preserved: Real-world AI observation hypothesis awards 0 XP.
+
+---
+
+## Two-Browser Cooperative Gameplay Testing Guide
+
+To test the two-player mystery experience locally using two browser windows (or one normal window and one incognito window):
+
+1. **Window A (Host Explorer - "Seeker")**:
+   - Navigate to [http://localhost:3000](http://localhost:3000).
+   - In the top navigation toggle, switch from **"Solo Expedition"** to **"Mystery Fellowship"**.
+   - Under **"Form Fellowship"**, enter Fellowship Name (e.g. `Order of the Key`) and Explorer Nickname (e.g. `Seeker`). Click **"Form Fellowship"**.
+   - In the fellowship lobby, click **"Copy Secret Token"** to copy the opaque invitation token (`wb_inv_...`).
+   - The lobby shows `Seeker (Host)` and displays `Waiting for a second explorer to join...`.
+
+2. **Window B (Partner Explorer - "Scholar" / Incognito)**:
+   - Navigate to [http://localhost:3000](http://localhost:3000) in an incognito window or second browser.
+   - Switch to **"Mystery Fellowship"**.
+   - Under **"Join Existing Fellowship"**, paste the copied invitation token and choose a nickname (e.g. `Scholar`). Click **"Join Fellowship"**.
+   - The lobby updates in both windows automatically (via background synchronization) showing both explorers assembled!
+
+3. **Window A (Host Begins Cooperative Quest)**:
+   - Under **"Embark on Cooperative Quest"**, choose duration and archetype, then click **"Start Two-Player Cooperative Quest"**.
+   - Both windows transition to the **Active Cooperative Quest** screen.
+
+4. **Verify Clue Privacy & Voice Narration**:
+   - Notice that Window A receives **Fragment I** (Slot 1 perspective) while Window B receives **Fragment II** (Slot 2 perspective).
+   - Neither explorer's browser receives or displays the partner's clue text.
+   - The Voice Game Master only reads the player's own visible clues and shared story—never the partner's hidden clues or destination secret.
+
+5. **Mutual Consent & Identity Protection**:
+   - Both players see only the partner's chosen nickname (`Seeker` and `Scholar`).
+   - If Player A clicks **"Consent to Reveal Real Name"**, Player B still only sees the nickname until Player B also consents.
+   - Either player can revoke consent at any time to re-cloak their identity.
+
+6. **Server-Side Verification & Completion**:
+   - Both explorers must independently click **"Verify Arrival & Answer"** to provide their GPS location and observation answer.
+   - In Window A, submit coordinates `37.779260, -122.416040` and answer `owl`. Window A marks verified, while the quest remains waiting for the partner.
+   - In Window B, submit the observation. Once both have verified, the quest atomically completes, destination is unveiled, and shared XP is rewarded!
+
+---
+
+## Production Security & Architecture Limitations
+
+1. **Authentication Foundation (MVP)**:
+   - The Phase 4B authentication foundation uses cryptographically random session tokens (64-byte hex tokens) mapped to server-side user identities and verified via SHA-256 session token hashes in the database.
+   - All multiplayer operations require a valid `Authorization: Bearer <token>` header; client-supplied UUIDs alone are strictly rejected.
+   - *Production Recommendation*: For public production deployments, upgrade from single-table session hashes to a production identity provider (e.g., Supabase Auth, Firebase Auth, Auth0, or OAuth 2.0 PKCE with refresh token rotation).
+2. **GPS Spoofing & Network Location**:
+   - Coordinates are submitted by the client and validated against the destination geofence on the backend.
+   - While partner coordinates are never shared or leaked between clients, device-level GPS spoofing is theoretically possible without carrier/hardware attestation. Production mobile apps should use Google Play Integrity API or Apple DeviceCheck.
+3. **Invitation Secret Security**:
+   - Invitation tokens are generated using `secrets.token_urlsafe(24)`, hashed with SHA-256 before storage, and expire in 24 hours. Raw tokens are never logged or exposed in general party queries.
+4. **Data Isolation**:
+   - Partner clues and raw coordinates are strictly filtered server-side in `PartyService` prior to Pydantic serialization; client bundles never receive partner clues over the wire.
+
+---
+
 ## Running Full Test Suites
 
 ```bash
-# 1. Backend tests (26 async pytest cases)
+# 1. Backend tests (31 async pytest cases covering Auth, Party lifecycle, Split Clues, Verification, and Secrecy)
 PYTHONPATH=. .venv/bin/pytest tests/ -v
 
-# 2. Frontend tests (12 Vitest cases covering geo safety, API client, secrecy, and leveling)
+# 2. Frontend tests (38 Vitest cases covering Voice narration, Party flows, Bearer Auth, Geo safety, and Secrecy)
 cd frontend && npm test
+
+# 3. Frontend Lint and Typecheck
+cd frontend && npm run lint && npm run typecheck
 ```
+
