@@ -106,6 +106,52 @@ describe("Geolocation & Safety Guardrails", () => {
     expect(pos.longitude).toBe(-122.4194);
     expect(pos.accuracy).toBe(12.5);
   });
+
+  it("reacquires fresh GPS coordinates on demand and fails safely if revoked", async () => {
+    Object.defineProperty(window, "isSecureContext", {
+      value: true,
+      configurable: true,
+    });
+
+    let attempts = 0;
+    const mockGeolocation = {
+      getCurrentPosition: vi.fn((success, error) => {
+        attempts++;
+        if (attempts === 1) {
+          success({
+            coords: {
+              latitude: 37.775,
+              longitude: -122.418,
+              accuracy: 10,
+            },
+          });
+        } else {
+          error({
+            code: 2, // POSITION_UNAVAILABLE
+            message: "GPS lost during transit",
+            PERMISSION_DENIED: 1,
+            POSITION_UNAVAILABLE: 2,
+            TIMEOUT: 3,
+          });
+        }
+      }),
+    };
+
+    Object.defineProperty(navigator, "geolocation", {
+      value: mockGeolocation,
+      configurable: true,
+    });
+
+    // Initial check passes
+    const initialCoords = await getCurrentCoordinates();
+    expect(initialCoords.latitude).toBe(37.775);
+
+    // Immediate reacquisition before verification fails safely
+    await expect(getCurrentCoordinates()).rejects.toThrowError(GeolocationError);
+    await expect(getCurrentCoordinates()).rejects.toMatchObject({
+      kind: "POSITION_UNAVAILABLE",
+    });
+  });
 });
 
 describe("Progression & Simulation Logic", () => {

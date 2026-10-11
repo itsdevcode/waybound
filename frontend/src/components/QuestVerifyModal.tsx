@@ -65,22 +65,36 @@ export function QuestVerifyModal({
     e.preventDefault();
     setVerifyError(null);
 
-    if (!coords) {
-      setVerifyError("You must acquire your current physical GPS coordinates to verify arrival.");
-      return;
-    }
-
-    if (!answer.trim()) {
+    const trimmedAnswer = answer.trim();
+    if (!trimmedAnswer) {
       setVerifyError("Please enter your observation answer from the physical location.");
       return;
     }
 
     setVerifying(true);
+
+    // CRITICAL REQUIREMENT: Reacquire GPS immediately before submitting verification.
+    // Fail safely if coordinates cannot be refreshed. Never submit stale or fake location.
+    let freshCoords: { latitude: number; longitude: number; accuracy: number };
+    try {
+      freshCoords = await getCurrentCoordinates();
+      setCoords(freshCoords);
+    } catch (geoErr: unknown) {
+      const msg =
+        geoErr instanceof GeolocationError
+          ? geoErr.message
+          : (geoErr as Error)?.message || "Failed to acquire fresh GPS coordinates.";
+      setVerifyError(`GPS verification failed: ${msg}`);
+      setCoords(null);
+      setVerifying(false);
+      return; // Fails safely without submitting
+    }
+
     try {
       const result = await onVerify({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        observation_answer: answer.trim(),
+        latitude: freshCoords.latitude,
+        longitude: freshCoords.longitude,
+        observation_answer: trimmedAnswer,
       });
       onSuccess(result);
       onClose();
@@ -240,13 +254,13 @@ export function QuestVerifyModal({
           <button
             type="submit"
             id="submit-verification-btn"
-            disabled={verifying || !coords || !answer.trim()}
+            disabled={verifying || !answer.trim()}
             className="btn-gold-rpg w-full flex items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg disabled:opacity-50 cursor-pointer"
           >
             {verifying ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-amber-950" />
-                <span>Verifying Proximity & Clues...</span>
+                <span>Reacquiring GPS & Verifying...</span>
               </>
             ) : (
               <>

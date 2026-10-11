@@ -134,7 +134,9 @@ export function ActiveQuestView({
             </span>
             <span>•</span>
             <span className="text-purple-300">
-              {isDemo ? `${quest.reward_xp} XP Available` : "Real-World Quest"}
+              {isDemo
+                ? `${quest.reward_xp} XP Available (Simulated Demo)`
+                : "Real-World Quest (0 XP - Provisional Ground Truth)"}
             </span>
           </div>
 

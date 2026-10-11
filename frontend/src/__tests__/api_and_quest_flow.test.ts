@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { api } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  getSavedActiveQuestId,
+  setSavedActiveQuestId,
+} from "@/lib/api";
 import type {
   QuestCreateRequest,
   QuestResponse,
@@ -10,6 +15,9 @@ import type {
 describe("API Client & Quest Progression Flow", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    if (typeof localStorage !== "undefined") {
+      localStorage.clear();
+    }
   });
 
   it("submits exact QuestCreateRequest schema without inventing fields", async () => {
@@ -57,7 +65,7 @@ describe("API Client & Quest Progression Flow", () => {
     );
   });
 
-  it("enforces destination secrecy before completion", async () => {
+  it("enforces destination secrecy for draft and active quests before completion", async () => {
     const activeQuest: QuestResponse = {
       id: "quest-123",
       title: "Shadows of the Citadel",
@@ -83,13 +91,13 @@ describe("API Client & Quest Progression Flow", () => {
     } as Response);
 
     const res = await api.getQuest("quest-123");
-    // Verification that destination name is null and no coordinates exist in response
+    // Verification that destination name is null and no destination coordinates exist in response
     expect(res.destination_name).toBeNull();
     expect((res as unknown as Record<string, unknown>).destination_latitude).toBeUndefined();
     expect((res as unknown as Record<string, unknown>).destination_longitude).toBeUndefined();
   });
 
-  it("handles hint unlock sequentially", async () => {
+  it("handles hint unlock sequentially without leaking destination", async () => {
     const hintRes: QuestHintResponse = {
       unlocked_step: {
         id: "c2",
@@ -127,6 +135,7 @@ describe("API Client & Quest Progression Flow", () => {
     const res = await api.unlockHint("quest-123");
     expect(res.unlocked_step?.step_order).toBe(2);
     expect(res.quest.current_clues).toHaveLength(2);
+    expect(res.quest.destination_name).toBeNull();
   });
 
   it("handles verification failure with backend detail", async () => {
@@ -190,5 +199,97 @@ describe("API Client & Quest Progression Flow", () => {
     expect(res.reward_xp_awarded).toBe(0);
     expect(res.quest.destination_name).toBe("Buena Vista Park Peak");
     expect(res.level).toBe(1);
+  });
+});
+
+describe("State Restoration & Error Differentiation", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("persists active quest ID in storage and restores without mutating or restarting", async () => {
+    setSavedActiveQuestId("quest-xyz");
+    expect(getSavedActiveQuestId()).toBe("quest-xyz");
+
+    const mockSavedQuest: QuestResponse = {
+      id: "quest-xyz",
+      title: "Preserved Active Quest",
+      description: "Still active.",
+      difficulty: "easy",
+      estimated_minutes: 15,
+      reward_xp: 100,
+      status: "active",
+      current_clues: [
+        { id: "c1", step_order: 1, clue: "Existing unlocked clue", is_unlocked: true },
+      ],
+      verification_prompt: "Observation prompt",
+      destination_name: null,
+      created_at: "2026-10-11T00:00:00Z",
+      started_at: "2026-10-11T00:01:00Z",
+      completed_at: null,
+      updated_at: "2026-10-11T00:01:00Z",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockSavedQuest,
+    } as Response);
+
+    const restored = await api.getQuest("quest-xyz");
+    expect(restored.id).toBe("quest-xyz");
+    expect(restored.status).toBe("active");
+
+    // Strictly ensure GET was used, never POST /start
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:8000/api/v1/quests/quest-xyz",
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      })
+    );
+    expect(fetchSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("/start"),
+      expect.anything()
+    );
+  });
+
+  it("clears stored active quest ID when quest is completed or abandoned", () => {
+    setSavedActiveQuestId("quest-xyz");
+    expect(getSavedActiveQuestId()).toBe("quest-xyz");
+
+    setSavedActiveQuestId(null);
+    expect(getSavedActiveQuestId()).toBeNull();
+  });
+
+  it("distinguishes backend connection failures from 404 user not found", async () => {
+    // 1. Connection failure (status 0 or network abort)
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    await expect(api.getProfile("user-test")).rejects.toThrowError(ApiError);
+
+    // 2. 404 User not found
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ detail: "User not found" }),
+    } as Response);
+
+    try {
+      await api.getProfile("00000000-0000-0000-0000-000000000002");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as ApiError).status).toBe(404);
+      expect((e as ApiError).message).toBe("User not found");
+    }
+  });
+
+  it("correctly handles legitimately empty quest history without error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+    } as Response);
+
+    const quests = await api.getUserQuests("user-test");
+    expect(quests).toEqual([]);
   });
 });
