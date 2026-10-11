@@ -64,8 +64,8 @@ services:
       - key: ELEVENLABS_API_KEY
         sync: false
       # CORS: Allow cross-origin requests from the public frontend origin (strict HTTPS, no wildcard)
+      # Configure your deployed frontend's public HTTPS origin in Render Dashboard (e.g. https://waybound-frontend.onrender.com)
       - key: CORS_ORIGINS
-        value: https://waybound-frontend.onrender.com
         sync: false
 
   # 2. Next.js Frontend Web Service
@@ -75,17 +75,17 @@ services:
     rootDir: frontend
     plan: free
     region: oregon
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /
     envVars:
       - key: NODE_VERSION
-        value: 20.18.0
+        value: 24.21.0
       # Public Backend API Target (Baked into client bundle at build-time & used at runtime)
+      # Configure your deployed backend's public HTTPS URL in Render Dashboard (e.g. https://waybound-backend.onrender.com)
       - key: NEXT_PUBLIC_API_URL
-        value: https://waybound-backend.onrender.com
         sync: false
       # Backend API Target for Next.js server-side rewrites proxy
+      # Configure your deployed backend's public HTTPS URL in Render Dashboard (e.g. https://waybound-backend.onrender.com)
       - key: BACKEND_URL
-        value: https://waybound-backend.onrender.com
         sync: false

@@ -159,55 +159,58 @@ def test_production_security_validation() -> None:
 
 def test_render_blueprint_environment_wiring() -> None:
     from pathlib import Path
+    from typing import Any
     import yaml
 
     blueprint_path = Path(__file__).resolve().parent.parent / "render.yaml"
     assert blueprint_path.exists(), "render.yaml blueprint must exist"
 
     with open(blueprint_path, "r", encoding="utf-8") as f:
-        blueprint = yaml.safe_load(f)
+        blueprint = cast(dict[str, Any], yaml.safe_load(f))
 
     assert blueprint.get("version") == "1"
-    databases = {db["name"]: db for db in blueprint.get("databases", [])}
+    raw_databases = cast(list[dict[str, Any]], blueprint.get("databases", []))
+    databases = {str(db["name"]): db for db in raw_databases}
     assert "waybound-db" in databases
 
-    services = {svc["name"]: svc for svc in blueprint.get("services", [])}
+    raw_services = cast(list[dict[str, Any]], blueprint.get("services", []))
+    services = {str(svc["name"]): svc for svc in raw_services}
     assert "waybound-backend" in services
     assert "waybound-frontend" in services
 
     backend = services["waybound-backend"]
-    backend_env = {item["key"]: item for item in backend.get("envVars", [])}
+    backend_env = {str(item["key"]): item for item in cast(list[dict[str, Any]], backend.get("envVars", []))}
 
-    # Verify CORS_ORIGINS is an explicit public HTTPS URL, not fromService or wildcard
+    # Verify CORS_ORIGINS uses sync: false without combining value (breaking circular dependency)
     assert "CORS_ORIGINS" in backend_env
     cors_item = backend_env["CORS_ORIGINS"]
     assert "fromService" not in cors_item, "CORS_ORIGINS must not use fromService which provides internal hostnames and causes circular dependency"
-    assert cors_item.get("sync") is False, "CORS_ORIGINS must have sync: false to allow dashboard overrides"
-    assert "value" in cors_item
-    cors_val = cors_item["value"]
-    assert cors_val.startswith("https://"), f"CORS_ORIGINS value '{cors_val}' must start with https://"
-    assert "." in cors_val.replace("https://", ""), f"CORS_ORIGINS value '{cors_val}' must be a public domain, not an internal hostname"
-    assert "*" not in cors_val
+    assert cors_item.get("sync") is False, "CORS_ORIGINS must have sync: false to prompt for manual public HTTPS URL in dashboard"
+    assert "value" not in cors_item, "Do not combine 'value' with 'sync: false' in Render Blueprint envVars"
 
     frontend = services["waybound-frontend"]
-    frontend_env = {item["key"]: item for item in frontend.get("envVars", [])}
+    frontend_env = {str(item["key"]): item for item in cast(list[dict[str, Any]], frontend.get("envVars", []))}
 
-    # Verify NEXT_PUBLIC_API_URL is an explicit public HTTPS URL
+    # Verify frontend buildCommand uses npm ci
+    assert frontend.get("buildCommand") == "npm ci && npm run build", "Frontend buildCommand must use 'npm ci && npm run build'"
+
+    # Verify NODE_VERSION is 24.21.0 aligning with Vitest/Vite peer requirements
+    assert "NODE_VERSION" in frontend_env
+    assert frontend_env["NODE_VERSION"].get("value") == "24.21.0"
+
+    # Verify NEXT_PUBLIC_API_URL uses sync: false without combining value
     assert "NEXT_PUBLIC_API_URL" in frontend_env
     api_url_item = frontend_env["NEXT_PUBLIC_API_URL"]
     assert "fromService" not in api_url_item, "NEXT_PUBLIC_API_URL must not use fromService which injects unresolvable internal hostnames to browser client"
     assert api_url_item.get("sync") is False
-    assert "value" in api_url_item
-    api_url_val = api_url_item["value"]
-    assert api_url_val.startswith("https://")
-    assert "." in api_url_val.replace("https://", "")
+    assert "value" not in api_url_item, "Do not combine 'value' with 'sync: false' in Render Blueprint envVars"
 
-    # Verify BACKEND_URL is an absolute URL
+    # Verify BACKEND_URL uses sync: false without combining value
     assert "BACKEND_URL" in frontend_env
     backend_url_item = frontend_env["BACKEND_URL"]
+    assert "fromService" not in backend_url_item
     assert backend_url_item.get("sync") is False
-    assert "value" in backend_url_item
-    assert backend_url_item["value"].startswith("http://") or backend_url_item["value"].startswith("https://")
+    assert "value" not in backend_url_item, "Do not combine 'value' with 'sync: false' in Render Blueprint envVars"
 
 
 @pytest.mark.asyncio
