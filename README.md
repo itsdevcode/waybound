@@ -9,35 +9,47 @@
 
 WAYBOUND transforms ordinary neighborhood walks and nearby public landmarks into immersive, game-like mystery expeditions. Powered by open-weights Gemma AI, Google Places discovery, live GPS geolocation, and walking route navigation, WAYBOUND encourages explorers to get outside, solve environmental clues, discover hidden secrets in their cities, and team up with friends.
 
+<!-- Quick Action Navigation -->
 <p align="center">
   <a href="https://waybound-frontend.onrender.com/"><img src="./docs/assets/badges/cta-play.svg" alt="Play WAYBOUND" /></a>
-  &nbsp;
+  &nbsp;&nbsp;
   <a href="https://github.com/itsdevcode/waybound"><img src="./docs/assets/badges/cta-source.svg" alt="View Source" /></a>
-  &nbsp;
+  &nbsp;&nbsp;
   <a href="https://github.com/itsdevcode/waybound/issues/new?template=bug_report.md"><img src="./docs/assets/badges/cta-bug.svg" alt="Report Bug" /></a>
-  &nbsp;
+  &nbsp;&nbsp;
   <a href="https://github.com/itsdevcode/waybound/issues/new?template=feature_request.md"><img src="./docs/assets/badges/cta-feature.svg" alt="Request Feature" /></a>
 </p>
 
----
-
-<!-- GitHub Badges (Locally Cached for 100% Reliable Rendering) -->
-<p align="center">
-  <a href="https://www.python.org/"><img src="./docs/assets/badges/python.svg" alt="Python 3.12" /></a>
-  <a href="https://fastapi.tiangolo.com/"><img src="./docs/assets/badges/fastapi.svg" alt="FastAPI" /></a>
-  <a href="https://nextjs.org/"><img src="./docs/assets/badges/nextjs.svg" alt="Next.js" /></a>
-  <a href="https://www.typescriptlang.org/"><img src="./docs/assets/badges/typescript.svg" alt="TypeScript" /></a>
-  <a href="https://www.postgresql.org/"><img src="./docs/assets/badges/postgresql.svg" alt="PostgreSQL" /></a>
-  <a href="https://developers.google.com/maps"><img src="./docs/assets/badges/googlemaps.svg" alt="Google Maps Platform" /></a>
-  <a href="https://ai.google.dev/"><img src="./docs/assets/badges/gemma.svg" alt="Google Gemma 2" /></a>
-  <a href="https://tailwindcss.com/"><img src="./docs/assets/badges/tailwind.svg" alt="Tailwind CSS" /></a>
-  <a href="./LICENSE"><img src="./docs/assets/badges/license.svg" alt="MIT License" /></a>
-</p>
+<!-- Project Status & GitHub Stats -->
 <p align="center">
   <a href="https://github.com/itsdevcode/waybound/stargazers"><img src="./docs/assets/badges/stars.svg" alt="GitHub Stars" /></a>
+  &nbsp;
   <a href="https://github.com/itsdevcode/waybound/network/members"><img src="./docs/assets/badges/forks.svg" alt="GitHub Forks" /></a>
+  &nbsp;
   <a href="https://github.com/itsdevcode/waybound/issues"><img src="./docs/assets/badges/issues.svg" alt="Open Issues" /></a>
+  &nbsp;
   <a href="https://github.com/itsdevcode/waybound/pulls"><img src="./docs/assets/badges/prs.svg" alt="PRs Welcome" /></a>
+  &nbsp;
+  <a href="./LICENSE"><img src="./docs/assets/badges/license.svg" alt="MIT License" /></a>
+</p>
+
+<!-- Core Tech Stack -->
+<p align="center">
+  <a href="https://www.python.org/"><img src="./docs/assets/badges/python.svg" alt="Python 3.12" /></a>
+  &nbsp;
+  <a href="https://fastapi.tiangolo.com/"><img src="./docs/assets/badges/fastapi.svg" alt="FastAPI" /></a>
+  &nbsp;
+  <a href="https://nextjs.org/"><img src="./docs/assets/badges/nextjs.svg" alt="Next.js" /></a>
+  &nbsp;
+  <a href="https://www.typescriptlang.org/"><img src="./docs/assets/badges/typescript.svg" alt="TypeScript" /></a>
+  &nbsp;
+  <a href="https://www.postgresql.org/"><img src="./docs/assets/badges/postgresql.svg" alt="PostgreSQL" /></a>
+  &nbsp;
+  <a href="https://developers.google.com/maps"><img src="./docs/assets/badges/googlemaps.svg" alt="Google Maps Platform" /></a>
+  &nbsp;
+  <a href="https://ai.google.dev/"><img src="./docs/assets/badges/gemma.svg" alt="Google Gemma 2" /></a>
+  &nbsp;
+  <a href="https://tailwindcss.com/"><img src="./docs/assets/badges/tailwind.svg" alt="Tailwind CSS" /></a>
 </p>
 
 </div>
