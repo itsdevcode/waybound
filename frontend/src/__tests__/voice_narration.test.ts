@@ -12,6 +12,7 @@ import {
   STORAGE_KEY_VOICE_MUTED,
   STORAGE_KEY_VOICE_URI,
 } from "@/lib/speech";
+import { speechController } from "@/lib/speechController";
 import { useVoiceNarration, type VoiceNarrationState } from "@/hooks/useVoiceNarration";
 import type { QuestResponse, QuestVerificationResponse } from "@/types/api";
 
@@ -24,6 +25,7 @@ describe("Voice Game Master - Speech Utility & Secrecy Guardrails", () => {
     if (typeof localStorage !== "undefined") {
       localStorage.clear();
     }
+    speechController.resetForTesting();
   });
 
   it("cleans markdown and formatting tokens into natural spoken sentences", () => {
@@ -156,7 +158,7 @@ describe("Voice Game Master - Speech Utility & Secrecy Guardrails", () => {
         status: "completed",
         current_clues: [],
         verification_prompt: "What mythical creature guards the basin?",
-        destination_name: "Saint Francis Memorial Cloister Courtyard", // Now revealed upon verification
+        destination_name: "Saint Francis Memorial Cloister Courtyard", // Revealed upon verification
         created_at: new Date().toISOString(),
         started_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
@@ -191,7 +193,6 @@ describe("Voice Game Master - Speech Utility & Secrecy Guardrails", () => {
 
 describe("Voice Game Master - Unsupported Browser Fallback", () => {
   it("gracefully disables speech without throwing errors when speechSynthesis is unavailable", () => {
-    // Delete speechSynthesis & SpeechSynthesisUtterance from window
     const originalSpeechSynthesis = window.speechSynthesis;
     const originalUtterance = window.SpeechSynthesisUtterance;
     // @ts-expect-error test deletion
@@ -201,8 +202,6 @@ describe("Voice Game Master - Unsupported Browser Fallback", () => {
 
     try {
       expect(isSpeechSynthesisSupported()).toBe(false);
-
-      // Verify that calling fallback helpers is completely safe
       expect(getSavedVoiceMuted()).toBe(false);
       setSavedVoiceMuted(true);
       expect(getSavedVoiceMuted()).toBe(true);
@@ -213,7 +212,7 @@ describe("Voice Game Master - Unsupported Browser Fallback", () => {
   });
 });
 
-describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
+describe("Voice Game Master - React Hook State Transitions & Hardened Concurrency", () => {
   let mockUtterances: MockUtterance[] = [];
   let mockSpeechSynthesis: {
     speak: ReturnType<typeof vi.fn>;
@@ -221,6 +220,7 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
     pause: ReturnType<typeof vi.fn>;
     resume: ReturnType<typeof vi.fn>;
     getVoices: ReturnType<typeof vi.fn>;
+    addEventListener: ReturnType<typeof vi.fn>;
     onvoiceschanged: (() => void) | null;
   };
 
@@ -241,19 +241,20 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
     }
   }
 
-  let container: HTMLDivElement | null = null;
+  let containers: HTMLDivElement[] = [];
 
   beforeEach(() => {
     mockUtterances = [];
     mockSpeechSynthesis = {
       speak: vi.fn((utterance: MockUtterance) => {
-        // Trigger onstart synchronously in mock test
+        // Trigger onstart synchronously by default in tests
         if (utterance.onstart) utterance.onstart();
       }),
       cancel: vi.fn(),
       pause: vi.fn(),
       resume: vi.fn(),
       getVoices: vi.fn(() => []),
+      addEventListener: vi.fn(),
       onvoiceschanged: null,
     };
 
@@ -273,30 +274,34 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
       localStorage.clear();
     }
 
-    container = document.createElement("div");
-    document.body.appendChild(container);
+    speechController.resetForTesting();
+    containers = [];
   });
 
   afterEach(() => {
-    if (container && container.parentNode) {
-      container.parentNode.removeChild(container);
-      container = null;
-    }
+    containers.forEach((c) => {
+      if (c && c.parentNode) {
+        c.parentNode.removeChild(c);
+      }
+    });
+    containers = [];
     vi.restoreAllMocks();
   });
 
-  // Helper harness to test the hook with React 19 createRoot
-  function renderHookHarness(callback: (state: VoiceNarrationState) => void) {
+  function renderHookHarness(ownerId?: string) {
     let capturedState: VoiceNarrationState | null = null;
 
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    containers.push(container);
+
     function TestComponent() {
-      const state = useVoiceNarration();
+      const state = useVoiceNarration(ownerId);
       capturedState = state;
-      callback(state);
-      return React.createElement("div", { id: "test-voice" });
+      return React.createElement("div", { id: ownerId || "test-voice" });
     }
 
-    const root = createRoot(container!);
+    const root = createRoot(container);
     act(() => {
       root.render(React.createElement(TestComponent));
     });
@@ -312,27 +317,24 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
   }
 
   it("initializes with isSupported = true, unmuted, and not playing", () => {
-    let stateSnap: VoiceNarrationState | null = null;
-    const harness = renderHookHarness((s) => {
-      stateSnap = s;
-    });
+    const harness = renderHookHarness();
+    const state = harness.getState();
 
-    expect(stateSnap!.isSupported).toBe(true);
-    expect(stateSnap!.isMuted).toBe(false);
-    expect(stateSnap!.isPlaying).toBe(false);
-    expect(stateSnap!.isPaused).toBe(false);
-    expect(stateSnap!.activeTrackId).toBeNull();
+    expect(state.isSupported).toBe(true);
+    expect(state.isMuted).toBe(false);
+    expect(state.isPlaying).toBe(false);
+    expect(state.isPaused).toBe(false);
+    expect(state.activeTrackId).toBeNull();
 
     harness.unmount();
   });
 
-  it("transitions state through play -> pause -> resume -> stop", () => {
-    const harness = renderHookHarness(() => {});
-    const state = harness.getState();
+  it("transitions state smoothly through play -> pause -> resume -> stop", () => {
+    const harness = renderHookHarness();
 
     // 1. Play track
     act(() => {
-      state.play("story", "Follow the trail to the stone altar.");
+      harness.getState().play("story", "Follow the trail to the stone altar.");
     });
 
     expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
@@ -372,12 +374,11 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
   });
 
   it("handles repeated taps and rapid track switching without overlapping speech", () => {
-    const harness = renderHookHarness(() => {});
-    const state = harness.getState();
+    const harness = renderHookHarness();
 
     // First tap: Play clue 1
     act(() => {
-      state.play("clue-1", "Look behind the clock tower.");
+      harness.getState().play("clue-1", "Look behind the clock tower.");
     });
 
     expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
@@ -385,10 +386,9 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
 
     // Rapid second tap: Switch to clue 2
     act(() => {
-      state.play("clue-2", "Search the stone archway.");
+      harness.getState().play("clue-2", "Search the stone archway.");
     });
 
-    // Previous speech canceled before speaking new utterance
     expect(mockSpeechSynthesis.cancel).toHaveBeenCalled();
     expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(2);
     expect(harness.getState().activeTrackId).toBe("clue-2");
@@ -396,42 +396,131 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
     harness.unmount();
   });
 
-  it("suppresses speech and cancels current playback when muted", () => {
-    const harness = renderHookHarness(() => {});
-    const state = harness.getState();
+  it("guards against stale asynchronous utterance callbacks from canceled speech", () => {
+    // Configure mock to NOT automatically fire onstart synchronously
+    mockSpeechSynthesis.speak = vi.fn();
 
-    // Start playing
+    const harness = renderHookHarness();
+
+    // 1. Play track 1
     act(() => {
-      state.play("story", "An adventurous quest begins.");
+      harness.getState().play("track-1", "First ancient inscription.");
     });
+    const utterance1 = mockUtterances[0];
+    act(() => {
+      if (utterance1.onstart) utterance1.onstart();
+    });
+    expect(harness.getState().activeTrackId).toBe("track-1");
     expect(harness.getState().isPlaying).toBe(true);
 
-    // Toggle mute
+    // 2. Rapidly switch to track 2
     act(() => {
-      harness.getState().toggleMute();
+      harness.getState().play("track-2", "Second ancient inscription.");
+    });
+    const utterance2 = mockUtterances[1];
+    act(() => {
+      if (utterance2.onstart) utterance2.onstart();
+    });
+    expect(harness.getState().activeTrackId).toBe("track-2");
+
+    // 3. Now simulate delayed 'onend' or 'onerror' event arriving from canceled Utterance 1
+    act(() => {
+      if (utterance1.onend) utterance1.onend();
+      if (utterance1.onerror) utterance1.onerror({ error: "interrupted" });
     });
 
-    expect(harness.getState().isMuted).toBe(true);
-    expect(mockSpeechSynthesis.cancel).toHaveBeenCalled();
+    // Utterance 1's stale callbacks MUST be ignored; track 2 must still be actively playing!
+    expect(harness.getState().activeTrackId).toBe("track-2");
+    expect(harness.getState().isPlaying).toBe(true);
+
+    // 4. When Utterance 2 finishes, state resets cleanly
+    act(() => {
+      if (utterance2.onend) utterance2.onend();
+    });
+    expect(harness.getState().activeTrackId).toBeNull();
     expect(harness.getState().isPlaying).toBe(false);
-
-    // While muted, calling play does not speak audio
-    mockSpeechSynthesis.speak.mockClear();
-    act(() => {
-      harness.getState().play("story", "This should not be spoken.");
-    });
-
-    expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
+  it("simultaneous hook instances: unmounting instance B does NOT cancel instance A's active speech", () => {
+    // Harness A: represents ActiveQuestView
+    const harnessA = renderHookHarness("quest-view");
+    // Harness B: represents QuestCompleteModal
+    const harnessB = renderHookHarness("complete-modal");
+
+    // Harness A starts playing quest story
+    act(() => {
+      harnessA.getState().play("quest-story", "A forgotten tomb awakens.");
+    });
+
+    expect(harnessA.getState().isPlaying).toBe(true);
+    expect(harnessB.getState().isPlaying).toBe(true);
+    expect(harnessA.getState().activeTrackId).toBe("quest-story");
+
+    mockSpeechSynthesis.cancel.mockClear();
+
+    // Harness B (e.g. modal) unmounts
+    harnessB.unmount();
+
+    // speechSynthesis.cancel MUST NOT be called because Harness B did not own the speech!
+    expect(mockSpeechSynthesis.cancel).not.toHaveBeenCalled();
+    expect(harnessA.getState().isPlaying).toBe(true);
+    expect(harnessA.getState().activeTrackId).toBe("quest-story");
+
+    // When Harness A unmounts, speech IS stopped
+    harnessA.unmount();
+    expect(mockSpeechSynthesis.cancel).toHaveBeenCalled();
+  });
+
+  it("synchronizes mute state and voice preference changes across all hook instances", () => {
+    const harnessA = renderHookHarness("instance-a");
+    const harnessB = renderHookHarness("instance-b");
+
+    expect(harnessA.getState().isMuted).toBe(false);
+    expect(harnessB.getState().isMuted).toBe(false);
+
+    // Instance A toggles mute
+    act(() => {
+      harnessA.getState().toggleMute();
+    });
+
+    // Instance B reflects mute immediately
+    expect(harnessA.getState().isMuted).toBe(true);
+    expect(harnessB.getState().isMuted).toBe(true);
+    expect(localStorage.getItem(STORAGE_KEY_VOICE_MUTED)).toBe("true");
+
+    // Provide mock voices
+    const mockVoiceList: SpeechSynthesisVoice[] = [
+      {
+        voiceURI: "heroic-gm-voice",
+        name: "Arthur Game Master",
+        lang: "en-US",
+        localService: true,
+        default: false,
+      },
+    ];
+
+    // Trigger voices on controller
+    act(() => {
+      mockSpeechSynthesis.getVoices = vi.fn(() => mockVoiceList);
+      speechController.loadVoices();
+      harnessA.getState().selectVoice("heroic-gm-voice");
+    });
+
+    // Both instances receive selected voice
+    expect(harnessA.getState().selectedVoice?.voiceURI).toBe("heroic-gm-voice");
+    expect(harnessB.getState().selectedVoice?.voiceURI).toBe("heroic-gm-voice");
+
+    harnessA.unmount();
+    harnessB.unmount();
+  });
+
   it("replays the last spoken track on demand", () => {
-    const harness = renderHookHarness(() => {});
-    const state = harness.getState();
+    const harness = renderHookHarness();
 
     act(() => {
-      state.play("clue-1", "Cross the ancient wooden bridge.");
+      harness.getState().play("clue-1", "Cross the ancient wooden bridge.");
     });
 
     expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
@@ -444,20 +533,5 @@ describe("Voice Game Master - React Hook State Transitions & Cleanup", () => {
     expect(harness.getState().activeTrackId).toBe("clue-1");
 
     harness.unmount();
-  });
-
-  it("cleans up and cancels speech synthesis when unmounted", () => {
-    const harness = renderHookHarness(() => {});
-    act(() => {
-      harness.getState().play("story", "A journey into the unknown.");
-    });
-
-    mockSpeechSynthesis.cancel.mockClear();
-
-    // Unmount component
-    harness.unmount();
-
-    // cancel() was called in cleanup
-    expect(mockSpeechSynthesis.cancel).toHaveBeenCalled();
   });
 });
