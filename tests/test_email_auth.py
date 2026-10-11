@@ -418,3 +418,126 @@ async def test_unauthenticated_access_to_me_endpoints(client: AsyncClient):
 
     resp2 = await client.get("/api/v1/users/me/quests")
     assert resp2.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_quest_generation_security_and_spoofing(client: AsyncClient, db_session: AsyncSession):
+    """
+    Regression tests for PR #12:
+    1. Unauthenticated quest generation in production returns 401.
+    2. User-ID spoofing: authenticated session user ID always overrides untrusted request.user_id.
+    3. Authorized quest creation with verified session Bearer token succeeds.
+    4. Profile/quest endpoints in production reject unauthorized queries to other users' data.
+    """
+    # Create two distinct test users with profiles
+    email1 = f"user1_{uuid.uuid4().hex[:6]}@example.com"
+    email2 = f"user2_{uuid.uuid4().hex[:6]}@example.com"
+
+    req1 = await client.post("/api/v1/auth/otp/request", json={"email": email1})
+    code1 = req1.json()["simulated_code"]
+    v1 = await client.post("/api/v1/auth/otp/verify", json={"email": email1, "code": code1})
+    token1 = v1.json()["token"]
+    user1_id = v1.json()["user_id"]
+    headers1 = {"Authorization": f"Bearer {token1}"}
+
+    req2 = await client.post("/api/v1/auth/otp/request", json={"email": email2})
+    code2 = req2.json()["simulated_code"]
+    v2 = await client.post("/api/v1/auth/otp/verify", json={"email": email2, "code": code2})
+    user2_id = v2.json()["user_id"]
+
+    # 1. Unauthenticated quest generation in production must return 401, not generic 500
+    with patch.object(settings, "environment", "production"), patch.object(settings, "allow_demo_auth", False):
+        unauth_gen = await client.post(
+            "/api/v1/quests/generate",
+            json={
+                "user_id": user1_id,
+                "available_minutes": 15,
+                "explorer_type": "mystery",
+                "difficulty": "easy",
+            },
+        )
+        assert unauth_gen.status_code == 401
+        assert "Authentication required" in unauth_gen.json()["detail"]
+
+    # 2. User-ID spoofing: Authenticated as User 1, but passing User 2's UUID in the body
+    # The effective user ID must be derived from User 1's verified session!
+    spoof_gen = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "user_id": user2_id,  # Caller attempts to spoof User 2
+            "available_minutes": 15,
+            "explorer_type": "discovery",
+            "difficulty": "easy",
+        },
+        headers=headers1,
+    )
+    assert spoof_gen.status_code == 201
+    quest_data = spoof_gen.json()
+    quest_id = quest_data["id"]
+
+    # Check that quest belongs to User 1, NOT User 2
+    my_quests = await client.get("/api/v1/users/me/quests", headers=headers1)
+    assert my_quests.status_code == 200
+    user1_quest_ids = [q["id"] for q in my_quests.json()]
+    assert quest_id in user1_quest_ids
+
+    # 3. Accessing another user's profile/quests in production must return 403 Forbidden
+    with patch.object(settings, "environment", "production"), patch.object(settings, "allow_demo_auth", False):
+        # User 1 attempting to view User 2's profile
+        other_prof = await client.get(f"/api/v1/users/{user2_id}/profile", headers=headers1)
+        assert other_prof.status_code == 403
+
+        # User 1 attempting to view User 2's quests
+        other_quests = await client.get(f"/api/v1/users/{user2_id}/quests", headers=headers1)
+        assert other_quests.status_code == 403
+
+        # Unauthenticated query to /{user_id}/profile in production -> 401
+        anon_prof = await client.get(f"/api/v1/users/{user2_id}/profile")
+        assert anon_prof.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_manual_city_selection_xp_restriction(client: AsyncClient, db_session: AsyncSession):
+    """
+    Ensure manual city selection or simulated location cannot be treated as verified GPS evidence
+    for earning real-world XP (awards 0 XP).
+    """
+    email = f"gps_test_{uuid.uuid4().hex[:6]}@example.com"
+    req = await client.post("/api/v1/auth/otp/request", json={"email": email})
+    code = req.json()["simulated_code"]
+    v = await client.post("/api/v1/auth/otp/verify", json={"email": email, "code": code})
+    token = v.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Generate quest
+    gen = await client.post(
+        "/api/v1/quests/generate",
+        json={
+            "available_minutes": 15,
+            "explorer_type": "mystery",
+            "difficulty": "easy",
+        },
+        headers=headers,
+    )
+    assert gen.status_code == 201
+    quest_id = gen.json()["id"]
+
+    # Start quest
+    start_res = await client.post(f"/api/v1/quests/{quest_id}/start")
+    assert start_res.status_code == 200
+
+    # Verify with manual location flag enabled (simulated city preset)
+    verify_res = await client.post(
+        f"/api/v1/quests/{quest_id}/verify",
+        json={
+            "latitude": 37.779260,
+            "longitude": -122.416040,
+            "observation_answer": "owl",
+            "is_manual_location": True,  # Manual city preset
+        },
+    )
+    assert verify_res.status_code == 200
+    v_data = verify_res.json()
+    assert v_data["success"] is True
+    # Real-world / manual XP must be 0
+    assert v_data["reward_xp_awarded"] == 0

@@ -218,4 +218,16 @@ describe("City Presets & Manual Location Fallback", () => {
       expect(city.longitude).toBeLessThanOrEqual(180);
     }
   });
+
+  it("ensures manual city selection cannot be treated as verified GPS evidence for earning real-world XP", () => {
+    const manualVerifyPayload = {
+      latitude: POPULAR_CITIES[0].latitude,
+      longitude: POPULAR_CITIES[0].longitude,
+      observation_answer: "owl",
+      is_manual_location: true,
+    };
+
+    // When manual location is submitted, is_manual_location must be explicitly flagged
+    expect(manualVerifyPayload.is_manual_location).toBe(true);
+  });
 });

@@ -98,6 +98,8 @@ class QuestService:
         )
 
     async def generate_quest(self, request: QuestCreateRequest) -> QuestResponse:
+        if not request.user_id:
+            raise UserNotFoundError("User ID is required to generate a quest")
         user = await self.user_repo.get_by_id(request.user_id)
         if not user:
             raise UserNotFoundError(f"User {request.user_id} not found")
@@ -302,7 +304,11 @@ class QuestService:
             # Simulated demo quests are eligible for XP under verified simulation rules.
             # Real-world Google Places + Gemma quests award 0 XP while AI-generated observation answers
             # remain unverified, ensuring no progression XP is awarded based on unverified ground truth.
-            if is_simulation:
+            # Additionally, if the client submitted manual city selection or unverified coordinates,
+            # zero XP is awarded to prevent spoofing or bypassing physical presence.
+            if request.is_manual_location:
+                awarded_xp = 0
+            elif is_simulation:
                 awarded_xp = quest.reward_xp
             else:
                 awarded_xp = 0
