@@ -1,12 +1,13 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.repositories.quest import QuestRepository
 from app.repositories.user import UserRepository
 from app.schemas.quest import (
+    NearbyQuestsResponse,
     QuestCreateRequest,
     QuestHintResponse,
     QuestResponse,
@@ -138,6 +139,40 @@ async def generate_quest(
 
         req_with_user = request.model_copy(update={"user_id": effective_user_id})
         return await service.generate_quest(req_with_user)
+    except Exception as e:
+        raise handle_service_error(e)
+
+
+@router.get(
+    "/nearby",
+    response_model=NearbyQuestsResponse,
+    summary="Get nearby quests and exploration markers",
+    description="Returns interactive quest markers within the requested radius centered around explorer coordinates.",
+)
+async def get_nearby_quests(
+    latitude: float = Query(..., ge=-90.0, le=90.0, description="Center latitude"),
+    longitude: float = Query(..., ge=-180.0, le=180.0, description="Center longitude"),
+    radius_meters: float = Query(1000.0, ge=100.0, le=50000.0, description="Search radius in meters"),
+    limit: int = Query(20, ge=1, le=50, description="Maximum number of markers to return"),
+    current_user: User | None = Depends(get_current_user_optional),
+    service: QuestService = Depends(get_quest_service),
+) -> NearbyQuestsResponse:
+    try:
+        user_id = current_user.id if current_user else None
+        items = await service.get_nearby_quests(
+            latitude=latitude,
+            longitude=longitude,
+            radius_meters=radius_meters,
+            limit=limit,
+            user_id=user_id,
+        )
+        return NearbyQuestsResponse(
+            items=items,
+            center_latitude=latitude,
+            center_longitude=longitude,
+            radius_meters=radius_meters,
+            total_count=len(items),
+        )
     except Exception as e:
         raise handle_service_error(e)
 

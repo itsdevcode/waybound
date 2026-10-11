@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Compass, Sparkles, User, RefreshCw } from "lucide-react";
+import { Compass, Sparkles, User, RefreshCw, Map } from "lucide-react";
 import type { ProfileResponse } from "@/types/api";
 
 interface HeaderProps {
@@ -9,9 +9,10 @@ interface HeaderProps {
   loading: boolean;
   onRefresh: () => void;
   onOpenUserModal: () => void;
+  onOpenMap?: () => void;
 }
 
-export function Header({ profile, loading, onRefresh, onOpenUserModal }: HeaderProps) {
+export function Header({ profile, loading, onRefresh, onOpenUserModal, onOpenMap }: HeaderProps) {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-purple-900/30 bg-[#090812]/80 backdrop-blur-md px-4 py-3">
       <div className="mx-auto flex max-w-md md:max-w-4xl items-center justify-between">
@@ -35,6 +36,18 @@ export function Header({ profile, loading, onRefresh, onOpenUserModal }: HeaderP
 
         {/* Right Action / Explorer Status */}
         <div className="flex items-center gap-2">
+          {onOpenMap && (
+            <button
+              onClick={onOpenMap}
+              title="Explore Nearby Quests on Map"
+              className="flex items-center gap-1.5 rounded-lg border border-purple-700/60 bg-gradient-to-r from-purple-900/50 to-indigo-900/50 px-2.5 py-1.5 text-xs text-purple-200 hover:text-white hover:border-purple-500 transition shadow-sm"
+              aria-label="Open Explore Map"
+            >
+              <Map className="h-3.5 w-3.5 text-amber-400" />
+              <span className="font-semibold hidden sm:inline">Explore Map</span>
+            </button>
+          )}
+
           <button
             onClick={onRefresh}
             disabled={loading}
