@@ -7,6 +7,31 @@
 
 export const STORAGE_KEY_VOICE_MUTED = "waybound_voice_muted";
 export const STORAGE_KEY_VOICE_URI = "waybound_voice_uri";
+export const STORAGE_KEY_VOICE_PROVIDER = "waybound_voice_provider";
+
+export type VoiceProvider = "off" | "browser" | "elevenlabs";
+
+export function getSavedVoiceProvider(): VoiceProvider {
+  if (typeof window === "undefined") return "browser";
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_VOICE_PROVIDER);
+    if (saved === "off" || saved === "browser" || saved === "elevenlabs") {
+      return saved;
+    }
+    return "browser";
+  } catch {
+    return "browser";
+  }
+}
+
+export function setSavedVoiceProvider(provider: VoiceProvider): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY_VOICE_PROVIDER, provider);
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 /**
  * Check if the browser supports SpeechSynthesis and SpeechSynthesisUtterance.

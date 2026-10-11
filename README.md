@@ -215,6 +215,37 @@ To test the two-player mystery experience locally using two browser windows (or 
 
 ---
 
+## Phase 4C: ElevenLabs Premium Voice Game Master
+
+WAYBOUND incorporates an optional, studio-quality Text-to-Speech integration powered by **ElevenLabs**, augmenting the free built-in browser `speechSynthesis` Voice Game Master.
+
+### 1. Dual-Provider Architecture & Automatic Browser Fallback
+- **Three Voice Modes**: Explorers can toggle between **Off**, **Browser (Free Device TTS)**, and **ElevenLabs (Studio AI)** directly from the active quest header and voice settings bar. Preferences persist automatically in `localStorage`.
+- **Zero Gameplay Disruption**: If ElevenLabs is unconfigured, disabled, rate-limited, times out, or exhausts API credits, WAYBOUND automatically and gracefully falls back to browser speech synthesis. Quest gameplay, progression, and verification are never interrupted.
+- **Single Playback Constraint**: A centralized, thread-safe `speechController` ensures that only one voice narration stream plays at any given time. Starting speech automatically stops prior tracks, and navigating away or abandoning quests immediately cleans up active audio.
+
+### 2. Credit Conservation & Server-Side LRU Caching
+To protect quota and optimize free-tier credit consumption:
+- **Server-Side Narration Caching**: Repeated narration requests (e.g., replaying quest descriptions or unlocked clues) are cached in an in-memory LRU cache (`NARRATION_CACHE_MAX_ITEMS`, default 500 items). Cache keys incorporate `voice_id::model_id::auth_scope::text`. Cached hits avoid external ElevenLabs API calls entirely.
+- **Input Length Caps**: Server-side synthesis restricts inputs to a maximum of 2,000 characters per utterance.
+- **Rate Limiting**: Dedicated rate limiting (`ELEVENLABS_RATE_LIMIT_PER_MINUTE`, default 20 req/min) prevents rapid credit depletion and abuse.
+- **Client Cache-Control**: Audio responses are delivered with `Cache-Control: private, max-age=3600` so client browsers cache MP3 chunks during an active quest session.
+
+### 3. Destination Secrecy & Server-Side Security
+- **Strictly Server-Side Credentials**: `ELEVENLABS_API_KEY` is kept strictly server-side and is never sent to the browser or client bundle.
+- **No Arbitrary User Text Synthesis**: The `/api/v1/narration/synthesize` endpoint rejects unrestricted client-supplied text. Narration is generated exclusively from authorized, unlocked quest events (`story`, unlocked `clue`, or verified `completion`).
+- **Destination Secrecy Enforced**: Hidden destination names, coordinates, and locked clues are strictly forbidden from narration.
+- **Cooperative Fellowship Isolation**: In multiplayer cooperative quests, an explorer can only narrate clues assigned to their own slot; partner-private clues cannot be synthesized.
+
+### 4. ElevenLabs API Setup & Free-Tier Guidance
+1. Create an account at [elevenlabs.io](https://elevenlabs.io) and obtain an API Key from Profile -> API Keys.
+2. Ensure your API key has the `text_to_speech` permission enabled.
+3. Choose a Voice ID from the ElevenLabs Voice Library (e.g., `21m00Tcm4TlvDq8ikWAM` - Rachel, `pNInz6obpgDQGcFmaJgB` - Adam, or custom community voices).
+4. Default recommended model: `eleven_multilingual_v2` or `eleven_turbo_v2_5` (faster and lower latency).
+5. Set `ELEVENLABS_ENABLED=true` in `.env` along with your `ELEVENLABS_API_KEY`.
+
+---
+
 ## Production Security & Architecture Limitations
 
 1. **Authentication & Identity Proof**:
@@ -243,10 +274,10 @@ To test the two-player mystery experience locally using two browser windows (or 
 ## Running Full Test Suites
 
 ```bash
-# 1. Backend tests (46 async pytest cases covering Auth OTP, Transactional Email, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
+# 1. Backend tests (57 async pytest cases covering ElevenLabs TTS, Auth OTP, Transactional Email, Rate Limiting, Concurrency, Split Clues, Verification, and Secrecy)
 PYTHONPATH=. .venv/bin/pytest tests/ -v
 
-# 2. Frontend tests (40 Vitest cases covering Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)
+# 2. Frontend tests (46 Vitest cases covering ElevenLabs playback & fallback, Voice narration, OTP Auth, Party flows, Geo safety, and Secrecy)
 cd frontend && npm test
 
 # 3. Frontend Lint and Typecheck
@@ -255,4 +286,5 @@ cd frontend && npm run lint && npm run typecheck
 # 4. Production Build
 cd frontend && npm run build
 ```
+
 

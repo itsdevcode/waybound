@@ -91,3 +91,20 @@ class DestinationCandidate(BaseModel):
     verification_prompt: str
     verification_answer: str
     clues: list[str]
+
+
+# --- Narration Schemas ---
+
+class NarrationRequest(BaseModel):
+    quest_id: uuid.UUID
+    content_type: Literal["story", "clue", "completion"]
+    step_id: uuid.UUID | None = None
+    voice_id: str | None = None
+    model_id: str | None = None
+
+
+class NarrationConfigResponse(BaseModel):
+    enabled: bool
+    default_voice_id: str
+    default_model_id: str
+

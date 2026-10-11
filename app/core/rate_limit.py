@@ -145,6 +145,16 @@ def create_rate_limiter() -> BaseRateLimiter:
 
 auth_rate_limiter: BaseRateLimiter = create_rate_limiter()
 
+def create_narration_rate_limiter() -> BaseRateLimiter:
+    storage = str(settings.rate_limit_storage).lower().strip()
+    limit = int(settings.elevenlabs_rate_limit_per_minute)
+    if storage == "database":
+        return DatabaseRateLimiter(limit=limit, window_seconds=60)
+    return InMemoryRateLimiter(limit=limit, window_seconds=60)
+
+
+narration_rate_limiter: BaseRateLimiter = create_narration_rate_limiter()
+
 
 def is_ip_trusted_proxy(ip_str: str, trusted_config: str) -> bool:
     """

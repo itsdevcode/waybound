@@ -81,3 +81,17 @@ export interface ApiErrorPayload {
   detail?: string | Array<{ loc?: string[]; msg?: string }>;
   message?: string;
 }
+
+export interface NarrationConfigResponse {
+  enabled: boolean;
+  default_voice_id: string | null;
+  default_model_id: string | null;
+}
+
+export interface NarrationSynthesizeParams {
+  quest_id: string;
+  content_type: "story" | "clue" | "completion";
+  step_id?: string;
+  voice_id?: string;
+  model_id?: string;
+}

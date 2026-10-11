@@ -91,6 +91,8 @@ export function QuestCompleteModal({
             isPaused={narration.isPaused}
             isMuted={narration.isMuted}
             isSupported={narration.isSupported}
+            isLoading={narration.isLoadingAudio}
+            questContext={{ questId: quest.id, contentType: "completion" }}
             onPlay={narration.play}
             onPause={narration.pause}
             onResume={narration.resume}

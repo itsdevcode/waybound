@@ -1,12 +1,14 @@
 /**
  * WAYBOUND - Voice Game Master Centralized Speech Controller
  *
- * Provides a thread-safe, exclusive singleton manager for the browser Web Speech API.
+ * Provides a thread-safe, exclusive singleton manager for both browser Web Speech API
+ * and ElevenLabs premium voice narration.
  * Guarantees:
  * 1. Single shared listener for voiceschanged (no handler clobbering across hooks).
  * 2. Monotonic utterance IDs preventing stale asynchronous callbacks from overwriting active state.
  * 3. Exclusive playback ownership (unmounting instances only cancel if they own active playback).
- * 4. Cross-component synchronization of mute and preferred voice settings.
+ * 4. Cross-component synchronization of mute, provider selection, and voice settings.
+ * 5. Automatic graceful fallback to browser speech if ElevenLabs is unavailable or errors.
  */
 
 import {
@@ -15,13 +17,29 @@ import {
   setSavedVoiceMuted,
   getSavedVoiceUri,
   setSavedVoiceUri,
+  getSavedVoiceProvider,
+  setSavedVoiceProvider,
   cleanNarrationForSpeech,
   pickGameMasterVoice,
+  type VoiceProvider,
 } from "./speech";
+import { api } from "./api";
+
+export interface NarrationQuestContext {
+  questId: string;
+  contentType: "story" | "clue" | "completion";
+  stepId?: string;
+  voiceId?: string;
+  modelId?: string;
+}
 
 export interface SpeechControllerState {
   isSupported: boolean;
   isMuted: boolean;
+  provider: VoiceProvider;
+  isLoadingAudio: boolean;
+  elevenlabsAvailable: boolean;
+  activeProvider: "browser" | "elevenlabs" | null;
   isPlaying: boolean;
   isPaused: boolean;
   activeTrackId: string | null;
@@ -33,6 +51,10 @@ export interface SpeechControllerState {
 const SERVER_SNAPSHOT: SpeechControllerState = {
   isSupported: false,
   isMuted: false,
+  provider: "browser",
+  isLoadingAudio: false,
+  elevenlabsAvailable: false,
+  activeProvider: null,
   isPlaying: false,
   isPaused: false,
   activeTrackId: null,
@@ -47,7 +69,14 @@ export class SpeechController {
   private nextUtteranceId = 0;
   private currentUtteranceId = 0;
   private currentUtteranceRef: SpeechSynthesisUtterance | null = null;
-  private lastTrack: { trackId: string; text: string; ownerId: string } | null = null;
+  private audioRef: HTMLAudioElement | null = null;
+  private currentAudioUrl: string | null = null;
+  private lastTrack: {
+    trackId: string;
+    text: string;
+    ownerId: string;
+    context?: NarrationQuestContext;
+  } | null = null;
   private initialized = false;
 
   constructor() {
@@ -62,6 +91,10 @@ export class SpeechController {
     return {
       isSupported: supported,
       isMuted: getSavedVoiceMuted(),
+      provider: getSavedVoiceProvider(),
+      isLoadingAudio: false,
+      elevenlabsAvailable: false,
+      activeProvider: null,
       isPlaying: false,
       isPaused: false,
       activeTrackId: null,
@@ -89,15 +122,33 @@ export class SpeechController {
   }
 
   /**
-   * Lazily initializes voice listeners on the client side once.
+   * Check ElevenLabs configuration on the server.
+   */
+  public async refreshElevenLabsConfig(): Promise<void> {
+    if (typeof window === "undefined") return;
+    try {
+      const config = await api.narration.getConfig();
+      this.updateState({
+        elevenlabsAvailable: Boolean(config?.enabled),
+      });
+    } catch {
+      this.updateState({
+        elevenlabsAvailable: false,
+      });
+    }
+  }
+
+  /**
+   * Lazily initializes voice listeners and ElevenLabs config on the client side once.
    */
   public ensureInitialized(): void {
-    if (this.initialized || typeof window === "undefined" || !this.state.isSupported) {
+    if (this.initialized || typeof window === "undefined") {
       return;
     }
     this.initialized = true;
 
     this.loadVoices();
+    this.refreshElevenLabsConfig();
 
     if (window.speechSynthesis) {
       const onVoicesChanged = () => this.loadVoices();
@@ -140,22 +191,34 @@ export class SpeechController {
     }
   }
 
-  /**
-   * Plays a speech track, claiming exclusive ownership for the specified ownerId.
-   * Cancels prior speech and invalidates prior utterance IDs.
-   */
-  public play(trackId: string, text: string, ownerId: string): void {
-    if (!this.state.isSupported || this.state.isMuted || !text.trim()) {
-      return;
+  private cleanupAudio(): void {
+    if (this.audioRef) {
+      try {
+        this.audioRef.pause();
+        this.audioRef.onplay = null;
+        this.audioRef.onpause = null;
+        this.audioRef.onended = null;
+        this.audioRef.onerror = null;
+        this.audioRef.src = "";
+      } catch {
+        // ignore
+      }
+      this.audioRef = null;
     }
 
-    // If currently paused on this exact track, simply resume
-    if (this.state.activeTrackId === trackId && this.state.isPaused) {
-      this.resume();
-      return;
+    if (this.currentAudioUrl) {
+      try {
+        URL.revokeObjectURL(this.currentAudioUrl);
+      } catch {
+        // ignore
+      }
+      this.currentAudioUrl = null;
     }
+  }
 
-    // Cancel any existing speech in the browser
+  private cancelAnyCurrentPlayback(): void {
+    this.cleanupAudio();
+
     if (typeof window !== "undefined" && window.speechSynthesis) {
       try {
         window.speechSynthesis.cancel();
@@ -164,13 +227,160 @@ export class SpeechController {
       }
     }
 
-    const cleanedText = cleanNarrationForSpeech(text);
-    if (!cleanedText) return;
+    this.currentUtteranceRef = null;
+  }
 
-    // Invalidate any lingering callbacks from earlier utterances
+  /**
+   * Plays speech narration, claiming exclusive ownership for the specified ownerId.
+   * If provider is 'elevenlabs' and questContext is given, fetches audio from the server.
+   * Automatically falls back to browser TTS if ElevenLabs is unavailable, disabled, or fails.
+   */
+  public play(
+    trackId: string,
+    text: string,
+    ownerId: string,
+    context?: NarrationQuestContext
+  ): void {
+    if (this.state.provider === "off" || this.state.isMuted || !text.trim()) {
+      return;
+    }
+
+    // If currently paused on this exact track, resume it
+    if (this.state.activeTrackId === trackId && this.state.isPaused) {
+      this.resume(ownerId);
+      return;
+    }
+
+    // Cancel existing audio or speech
+    this.cancelAnyCurrentPlayback();
+
     const thisUtteranceId = ++this.nextUtteranceId;
     this.currentUtteranceId = thisUtteranceId;
-    this.lastTrack = { trackId, text: cleanedText, ownerId };
+    this.lastTrack = { trackId, text, ownerId, context };
+
+    // ElevenLabs provider flow
+    if (this.state.provider === "elevenlabs" && context) {
+      this.updateState({
+        isLoadingAudio: true,
+        isPlaying: false,
+        isPaused: false,
+        activeTrackId: trackId,
+        activeOwnerId: ownerId,
+        activeProvider: "elevenlabs",
+      });
+
+      api.narration
+        .fetchAudioBlob({
+          quest_id: context.questId,
+          content_type: context.contentType,
+          step_id: context.stepId,
+          voice_id: context.voiceId,
+          model_id: context.modelId,
+        })
+        .then((blob) => {
+          // Stale callback check
+          if (this.currentUtteranceId !== thisUtteranceId) {
+            return;
+          }
+
+          const objectUrl = URL.createObjectURL(blob);
+          this.currentAudioUrl = objectUrl;
+
+          const audio = new Audio(objectUrl);
+          this.audioRef = audio;
+
+          audio.onplay = () => {
+            if (this.currentUtteranceId !== thisUtteranceId) return;
+            this.updateState({
+              isPlaying: true,
+              isPaused: false,
+              isLoadingAudio: false,
+              activeTrackId: trackId,
+              activeOwnerId: ownerId,
+              activeProvider: "elevenlabs",
+            });
+          };
+
+          audio.onpause = () => {
+            if (this.currentUtteranceId !== thisUtteranceId) return;
+            if (!audio.ended) {
+              this.updateState({
+                isPaused: true,
+                isPlaying: false,
+              });
+            }
+          };
+
+          audio.onended = () => {
+            if (this.currentUtteranceId !== thisUtteranceId) return;
+            this.cleanupAudio();
+            this.updateState({
+              isPlaying: false,
+              isPaused: false,
+              isLoadingAudio: false,
+              activeTrackId: null,
+              activeOwnerId: null,
+              activeProvider: null,
+            });
+          };
+
+          audio.onerror = () => {
+            if (this.currentUtteranceId !== thisUtteranceId) return;
+            console.warn("ElevenLabs audio element playback error. Falling back to browser TTS.");
+            this.cleanupAudio();
+            this.playBrowserSpeech(trackId, text, ownerId, thisUtteranceId);
+          };
+
+          audio.play().catch((err) => {
+            if (this.currentUtteranceId !== thisUtteranceId) return;
+            console.warn("Audio play() rejected. Falling back to browser TTS:", err);
+            this.cleanupAudio();
+            this.playBrowserSpeech(trackId, text, ownerId, thisUtteranceId);
+          });
+        })
+        .catch((err) => {
+          if (this.currentUtteranceId !== thisUtteranceId) return;
+          console.warn("ElevenLabs synthesis request failed. Falling back to browser TTS:", err);
+          this.playBrowserSpeech(trackId, text, ownerId, thisUtteranceId);
+        });
+
+      return;
+    }
+
+    // Default Browser Web Speech flow
+    this.playBrowserSpeech(trackId, text, ownerId, thisUtteranceId);
+  }
+
+  private playBrowserSpeech(
+    trackId: string,
+    text: string,
+    ownerId: string,
+    utteranceId: number
+  ): void {
+    if (!this.state.isSupported) {
+      this.updateState({
+        isLoadingAudio: false,
+        isPlaying: false,
+        isPaused: false,
+        activeTrackId: null,
+        activeOwnerId: null,
+        activeProvider: null,
+      });
+      return;
+    }
+
+    const cleanedText = cleanNarrationForSpeech(text);
+    if (!cleanedText) {
+      this.updateState({
+        isLoadingAudio: false,
+        isPlaying: false,
+        isPaused: false,
+        activeTrackId: null,
+        activeOwnerId: null,
+        activeProvider: null,
+      });
+      return;
+    }
 
     try {
       const utterance = new SpeechSynthesisUtterance(cleanedText);
@@ -181,31 +391,32 @@ export class SpeechController {
       utterance.pitch = 1.0;
 
       utterance.onstart = () => {
-        // Guard against stale callbacks
-        if (this.currentUtteranceId !== thisUtteranceId) return;
+        if (this.currentUtteranceId !== utteranceId) return;
         this.updateState({
           isPlaying: true,
           isPaused: false,
+          isLoadingAudio: false,
           activeTrackId: trackId,
           activeOwnerId: ownerId,
+          activeProvider: "browser",
         });
       };
 
       utterance.onend = () => {
-        // Guard against stale callbacks
-        if (this.currentUtteranceId !== thisUtteranceId) return;
+        if (this.currentUtteranceId !== utteranceId) return;
         this.currentUtteranceRef = null;
         this.updateState({
           isPlaying: false,
           isPaused: false,
+          isLoadingAudio: false,
           activeTrackId: null,
           activeOwnerId: null,
+          activeProvider: null,
         });
       };
 
       utterance.onerror = (e) => {
-        // Guard against stale callbacks
-        if (this.currentUtteranceId !== thisUtteranceId) return;
+        if (this.currentUtteranceId !== utteranceId) return;
         if (e.error !== "interrupted" && e.error !== "canceled") {
           console.warn("Speech synthesis notice:", e.error);
         }
@@ -213,13 +424,15 @@ export class SpeechController {
         this.updateState({
           isPlaying: false,
           isPaused: false,
+          isLoadingAudio: false,
           activeTrackId: null,
           activeOwnerId: null,
+          activeProvider: null,
         });
       };
 
       utterance.onpause = () => {
-        if (this.currentUtteranceId !== thisUtteranceId) return;
+        if (this.currentUtteranceId !== utteranceId) return;
         this.updateState({
           isPaused: true,
           isPlaying: false,
@@ -227,14 +440,13 @@ export class SpeechController {
       };
 
       utterance.onresume = () => {
-        if (this.currentUtteranceId !== thisUtteranceId) return;
+        if (this.currentUtteranceId !== utteranceId) return;
         this.updateState({
           isPaused: false,
           isPlaying: true,
         });
       };
 
-      // Retain reference to prevent GC
       this.currentUtteranceRef = utterance;
       window.speechSynthesis.speak(utterance);
     } catch (err) {
@@ -243,23 +455,36 @@ export class SpeechController {
       this.updateState({
         isPlaying: false,
         isPaused: false,
+        isLoadingAudio: false,
         activeTrackId: null,
         activeOwnerId: null,
+        activeProvider: null,
       });
     }
   }
 
   public pause(ownerId?: string): void {
-    if (!this.state.isSupported || typeof window === "undefined" || !window.speechSynthesis) return;
     if (ownerId && this.state.activeOwnerId && this.state.activeOwnerId !== ownerId) return;
 
     try {
-      if (this.state.isPlaying && !this.state.isPaused) {
-        window.speechSynthesis.pause();
+      if (this.state.activeProvider === "elevenlabs" && this.audioRef) {
+        this.audioRef.pause();
         this.updateState({
           isPaused: true,
           isPlaying: false,
         });
+      } else if (
+        this.state.isSupported &&
+        typeof window !== "undefined" &&
+        window.speechSynthesis
+      ) {
+        if (this.state.isPlaying && !this.state.isPaused) {
+          window.speechSynthesis.pause();
+          this.updateState({
+            isPaused: true,
+            isPlaying: false,
+          });
+        }
       }
     } catch {
       // ignore
@@ -267,16 +492,27 @@ export class SpeechController {
   }
 
   public resume(ownerId?: string): void {
-    if (!this.state.isSupported || typeof window === "undefined" || !window.speechSynthesis) return;
     if (ownerId && this.state.activeOwnerId && this.state.activeOwnerId !== ownerId) return;
 
     try {
-      if (this.state.isPaused) {
-        window.speechSynthesis.resume();
+      if (this.state.activeProvider === "elevenlabs" && this.audioRef) {
+        this.audioRef.play().catch(() => {});
         this.updateState({
           isPaused: false,
           isPlaying: true,
         });
+      } else if (
+        this.state.isSupported &&
+        typeof window !== "undefined" &&
+        window.speechSynthesis
+      ) {
+        if (this.state.isPaused) {
+          window.speechSynthesis.resume();
+          this.updateState({
+            isPaused: false,
+            isPlaying: true,
+          });
+        }
       }
     } catch {
       // ignore
@@ -291,30 +527,29 @@ export class SpeechController {
       return;
     }
 
-    // Invalidate any pending utterance callbacks
+    // Invalidate any pending callbacks
     this.currentUtteranceId = ++this.nextUtteranceId;
-    this.currentUtteranceRef = null;
-
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        // ignore
-      }
-    }
+    this.cancelAnyCurrentPlayback();
 
     this.updateState({
       isPlaying: false,
       isPaused: false,
+      isLoadingAudio: false,
       activeTrackId: null,
       activeOwnerId: null,
+      activeProvider: null,
     });
   }
 
   public replay(ownerId?: string): void {
     if (this.lastTrack) {
       const activeOwner = ownerId || this.lastTrack.ownerId;
-      this.play(this.lastTrack.trackId, this.lastTrack.text, activeOwner);
+      this.play(
+        this.lastTrack.trackId,
+        this.lastTrack.text,
+        activeOwner,
+        this.lastTrack.context
+      );
     }
   }
 
@@ -325,6 +560,14 @@ export class SpeechController {
     if (this.state.activeOwnerId === ownerId) {
       this.stop(ownerId);
     }
+  }
+
+  public setProvider(provider: VoiceProvider): void {
+    setSavedVoiceProvider(provider);
+    if (provider === "off" || (this.state.isPlaying && provider !== this.state.provider)) {
+      this.stop();
+    }
+    this.updateState({ provider });
   }
 
   public setMuted(muted: boolean): void {
@@ -351,9 +594,9 @@ export class SpeechController {
    * Testing helper to reset internal singleton state between tests.
    */
   public resetForTesting(): void {
+    this.cancelAnyCurrentPlayback();
     this.nextUtteranceId = 0;
     this.currentUtteranceId = 0;
-    this.currentUtteranceRef = null;
     this.lastTrack = null;
     this.initialized = false;
     this.state = this.createInitialState();

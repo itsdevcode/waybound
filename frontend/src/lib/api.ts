@@ -1,5 +1,7 @@
 import type {
   ApiErrorPayload,
+  NarrationConfigResponse,
+  NarrationSynthesizeParams,
   ProfileResponse,
   QuestCreateRequest,
   QuestHintResponse,
@@ -403,4 +405,69 @@ export const api = {
       );
     },
   },
+
+  narration: {
+    async getConfig(): Promise<NarrationConfigResponse> {
+      return request<NarrationConfigResponse>("/api/v1/narration/config");
+    },
+
+    async fetchAudioBlob(params: NarrationSynthesizeParams): Promise<Blob> {
+      const baseUrl = getApiBaseUrl();
+      const queryParams = new URLSearchParams({
+        quest_id: params.quest_id,
+        content_type: params.content_type,
+      });
+      if (params.step_id) queryParams.set("step_id", params.step_id);
+      if (params.voice_id) queryParams.set("voice_id", params.voice_id);
+      if (params.model_id) queryParams.set("model_id", params.model_id);
+
+      const url = `${baseUrl}/api/v1/narration/synthesize?${queryParams.toString()}`;
+      const headers = new Headers({
+        Accept: "audio/mpeg, audio/*",
+      });
+
+      const token = getAuthToken();
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          let errMessage = `Narration request failed with status ${response.status}`;
+          let parsedData: ApiErrorPayload | undefined;
+          try {
+            parsedData = await response.json();
+            if (typeof parsedData?.detail === "string") {
+              errMessage = parsedData.detail;
+            } else if (parsedData?.message) {
+              errMessage = parsedData.message;
+            }
+          } catch {
+            errMessage = response.statusText || errMessage;
+          }
+          throw new ApiError(errMessage, response.status, parsedData);
+        }
+
+        return await response.blob();
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (err instanceof ApiError) throw err;
+        throw new ApiError(
+          (err as Error)?.message || "Failed to fetch narration audio stream",
+          500
+        );
+      }
+    },
+  },
 };
+
