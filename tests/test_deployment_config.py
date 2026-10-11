@@ -76,6 +76,50 @@ def test_production_security_validation() -> None:
             cors_origins="*",
         )
 
+    # Production with empty CORS must fail
+    with pytest.raises(ValidationError):
+        _ = Settings(
+            environment="production",
+            auth_secret="a" * 32,
+            email_provider="resend",
+            resend_api_key="re_valid_key",
+            email_from="WAYBOUND <onboarding@resend.dev>",
+            cors_origins="",
+        )
+
+    # Production with internal bare hostname CORS must fail
+    with pytest.raises(ValidationError):
+        _ = Settings(
+            environment="production",
+            auth_secret="a" * 32,
+            email_provider="resend",
+            resend_api_key="re_valid_key",
+            email_from="WAYBOUND <onboarding@resend.dev>",
+            cors_origins="waybound-frontend",
+        )
+
+    # Production with internal bare hostname HTTPS CORS must fail
+    with pytest.raises(ValidationError):
+        _ = Settings(
+            environment="production",
+            auth_secret="a" * 32,
+            email_provider="resend",
+            resend_api_key="re_valid_key",
+            email_from="WAYBOUND <onboarding@resend.dev>",
+            cors_origins="https://waybound-frontend",
+        )
+
+    # Production with insecure HTTP CORS must fail
+    with pytest.raises(ValidationError):
+        _ = Settings(
+            environment="production",
+            auth_secret="a" * 32,
+            email_provider="resend",
+            resend_api_key="re_valid_key",
+            email_from="WAYBOUND <onboarding@resend.dev>",
+            cors_origins="http://waybound-frontend.onrender.com",
+        )
+
     # Production with unverified placeholder email_from must fail
     with pytest.raises(ValidationError):
         _ = Settings(
@@ -99,6 +143,71 @@ def test_production_security_validation() -> None:
     assert valid_prod.allow_demo_auth is False
     assert valid_prod.environment == "production"
     assert "https://waybound-frontend.onrender.com" in valid_prod.cors_origins_list
+
+    # Valid multiple production origins
+    valid_multi = Settings(
+        environment="production",
+        auth_secret="a" * 32,
+        email_provider="resend",
+        resend_api_key="re_sample_production_key",
+        email_from="WAYBOUND <auth@verified-domain.com>",
+        cors_origins="https://waybound-frontend.onrender.com, https://explorer.waybound.dev",
+    )
+    assert "https://waybound-frontend.onrender.com" in valid_multi.cors_origins_list
+    assert "https://explorer.waybound.dev" in valid_multi.cors_origins_list
+
+
+def test_render_blueprint_environment_wiring() -> None:
+    from pathlib import Path
+    import yaml
+
+    blueprint_path = Path(__file__).resolve().parent.parent / "render.yaml"
+    assert blueprint_path.exists(), "render.yaml blueprint must exist"
+
+    with open(blueprint_path, "r", encoding="utf-8") as f:
+        blueprint = yaml.safe_load(f)
+
+    assert blueprint.get("version") == "1"
+    databases = {db["name"]: db for db in blueprint.get("databases", [])}
+    assert "waybound-db" in databases
+
+    services = {svc["name"]: svc for svc in blueprint.get("services", [])}
+    assert "waybound-backend" in services
+    assert "waybound-frontend" in services
+
+    backend = services["waybound-backend"]
+    backend_env = {item["key"]: item for item in backend.get("envVars", [])}
+
+    # Verify CORS_ORIGINS is an explicit public HTTPS URL, not fromService or wildcard
+    assert "CORS_ORIGINS" in backend_env
+    cors_item = backend_env["CORS_ORIGINS"]
+    assert "fromService" not in cors_item, "CORS_ORIGINS must not use fromService which provides internal hostnames and causes circular dependency"
+    assert cors_item.get("sync") is False, "CORS_ORIGINS must have sync: false to allow dashboard overrides"
+    assert "value" in cors_item
+    cors_val = cors_item["value"]
+    assert cors_val.startswith("https://"), f"CORS_ORIGINS value '{cors_val}' must start with https://"
+    assert "." in cors_val.replace("https://", ""), f"CORS_ORIGINS value '{cors_val}' must be a public domain, not an internal hostname"
+    assert "*" not in cors_val
+
+    frontend = services["waybound-frontend"]
+    frontend_env = {item["key"]: item for item in frontend.get("envVars", [])}
+
+    # Verify NEXT_PUBLIC_API_URL is an explicit public HTTPS URL
+    assert "NEXT_PUBLIC_API_URL" in frontend_env
+    api_url_item = frontend_env["NEXT_PUBLIC_API_URL"]
+    assert "fromService" not in api_url_item, "NEXT_PUBLIC_API_URL must not use fromService which injects unresolvable internal hostnames to browser client"
+    assert api_url_item.get("sync") is False
+    assert "value" in api_url_item
+    api_url_val = api_url_item["value"]
+    assert api_url_val.startswith("https://")
+    assert "." in api_url_val.replace("https://", "")
+
+    # Verify BACKEND_URL is an absolute URL
+    assert "BACKEND_URL" in frontend_env
+    backend_url_item = frontend_env["BACKEND_URL"]
+    assert backend_url_item.get("sync") is False
+    assert "value" in backend_url_item
+    assert backend_url_item["value"].startswith("http://") or backend_url_item["value"].startswith("https://")
 
 
 @pytest.mark.asyncio

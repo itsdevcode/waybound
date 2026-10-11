@@ -157,6 +157,11 @@ class Settings(BaseSettings):
                     raise ValueError(
                         f"Production configuration error: CORS origin '{origin}' must use the secure HTTPS protocol."
                     )
+                domain_part = origin[len("https://"):].split("/")[0].split(":")[0]
+                if "." not in domain_part:
+                    raise ValueError(
+                        f"Production configuration error: CORS origin '{origin}' must be an actual public domain with a valid TLD (e.g. 'https://waybound-frontend.onrender.com'), not an internal hostname."
+                    )
 
             # In production, unverified or placeholder sender email is strictly forbidden
             placeholder_senders = [

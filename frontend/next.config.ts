@@ -13,15 +13,17 @@ export function resolveBackendRewriteDestination(rawUrl?: string): string {
     return "http://localhost:8000/api/v1/:path*";
   }
 
-  // If no scheme is present (e.g. Render fromService host "waybound-backend.onrender.com"),
-  // prepend http:// for localhost/loopback and https:// for all remote hosts.
+  // If no scheme is present (e.g. Render host "waybound-backend.onrender.com" or internal "waybound-backend:10000"),
+  // prepend http:// for localhost/loopback/internal service hostports and https:// for public remote hosts.
   if (!candidate.startsWith("http://") && !candidate.startsWith("https://")) {
-    const isLocal =
-      candidate.startsWith("localhost") ||
-      candidate.startsWith("127.0.0.1") ||
-      candidate.startsWith("0.0.0.0") ||
-      candidate.startsWith("[::1]");
-    candidate = isLocal ? `http://${candidate}` : `https://${candidate}`;
+    const hostname = candidate.split("/")[0].split(":")[0];
+    const isLocalOrInternal =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname === "[::1]" ||
+      !hostname.includes(".");
+    candidate = isLocalOrInternal ? `http://${candidate}` : `https://${candidate}`;
   }
 
   try {

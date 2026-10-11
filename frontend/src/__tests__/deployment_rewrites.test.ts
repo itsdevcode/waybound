@@ -29,6 +29,15 @@ describe("Next.js Backend Rewrite Destination Resolution", () => {
     );
   });
 
+  it("handles internal service hostports with http://", () => {
+    expect(resolveBackendRewriteDestination("waybound-backend:10000")).toBe(
+      "http://waybound-backend:10000/api/v1/:path*"
+    );
+    expect(resolveBackendRewriteDestination("http://waybound-backend:10000")).toBe(
+      "http://waybound-backend:10000/api/v1/:path*"
+    );
+  });
+
   it("falls back to default http://localhost:8000 for empty or whitespace inputs", () => {
     expect(resolveBackendRewriteDestination("")).toBe(
       "http://localhost:8000/api/v1/:path*"

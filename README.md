@@ -337,7 +337,7 @@ The blueprint declares three synchronized components:
 | `DB_POOL_SIZE` | Backend | Optional | Connection pool size per worker. Default: `5`. |
 | `DB_MAX_OVERFLOW` | Backend | Optional | Max connection overflow per worker. Default: `5`. |
 | `TRUSTED_PROXIES` | Backend | Optional | Trusted proxy boundary for header validation. Default: `127.0.0.1,::1,10.0.0.0/8`. |
-| `CORS_ORIGINS` | Backend | **Yes** | Auto-injected from `waybound-frontend`. In production, wildcard `*` is strictly rejected and explicit HTTPS origins are enforced. |
+| `CORS_ORIGINS` | Backend | **Yes** | Explicit public HTTPS frontend origin (e.g. `https://waybound-frontend.onrender.com` or custom domain). In production, wildcard `*`, empty values, and internal hostnames are strictly rejected. Configured with `sync: false` to allow dashboard customization. |
 | `EMAIL_PROVIDER` | Backend | **Yes** | `resend` (recommended) or `smtp`. |
 | `EMAIL_FROM` | Backend | **Yes** | Verified sender address (e.g. `WAYBOUND <auth@yourdomain.com>` or `onboarding@resend.dev`). Placeholders like `waybound.dev` are rejected. |
 | `RESEND_API_KEY` | Backend | **Conditional** | Required if `EMAIL_PROVIDER=resend`. Server-side only. |
@@ -346,12 +346,42 @@ The blueprint declares three synchronized components:
 | `GEMMA_API_KEY` | Backend | Optional | Required if `QUEST_PROVIDER=google_places_gemma`. Server-side only. |
 | `ELEVENLABS_ENABLED` | Backend | Optional | Set to `true` to activate ElevenLabs TTS. |
 | `ELEVENLABS_API_KEY` | Backend | Optional | Required if `ELEVENLABS_ENABLED=true`. Server-side only. |
-| `NEXT_PUBLIC_API_URL` | Frontend | **Yes** | Auto-injected backend service hostname. Normalized with `https://`. |
-| `BACKEND_URL` | Frontend | Optional | Auto-injected backend service hostname for Next.js server-side rewrites. |
+| `NEXT_PUBLIC_API_URL` | Frontend | **Yes** | Public HTTPS backend URL (e.g. `https://waybound-backend.onrender.com` or custom domain). Baked into client bundle at build-time and used for browser API requests. Configured with `sync: false`. |
+| `BACKEND_URL` | Frontend | Optional | Public HTTPS backend URL or valid absolute URL (e.g. `https://waybound-backend.onrender.com`) used by Next.js server-side rewrites. Configured with `sync: false`. |
 
 ---
 
-### 4. Transactional Email & Resend Domain Verification
+### 4. Post-Provisioning Manual Configuration Checklist
+
+Render provisions services with initial defaults. Depending on naming collisions or custom domain setups, verify and configure the following variables in the **Render Dashboard**:
+
+1. **`CORS_ORIGINS` (Backend Service -> Environment)**:
+   - Ensure this exactly matches your deployed frontend's public HTTPS origin (e.g., `https://waybound-frontend.onrender.com` or `https://explorer.yourdomain.com`).
+   - If Render generated a unique slug (e.g., `waybound-frontend-xxxx.onrender.com`), update `CORS_ORIGINS` on the backend to match.
+   - For multiple origins (e.g. production domain + staging domain), use comma separation: `https://waybound-frontend.onrender.com,https://explorer.yourdomain.com`.
+   - *Security note*: Wildcards (`*`), empty strings, and private internal service hostnames are rejected at backend startup.
+
+2. **`NEXT_PUBLIC_API_URL` (Frontend Service -> Environment)**:
+   - Ensure this points to the public HTTPS URL of your deployed backend service (e.g., `https://waybound-backend.onrender.com` or `https://api.yourdomain.com`).
+   - *Important*: Next.js inlines `NEXT_PUBLIC_*` variables into the static JavaScript bundles during `npm run build`. If you update `NEXT_PUBLIC_API_URL` in the Render Dashboard, you **must trigger a manual redeploy** on `waybound-frontend` so Next.js rebuilds with the new target.
+
+3. **`BACKEND_URL` (Frontend Service -> Environment)**:
+   - Set to the public HTTPS backend URL (e.g., `https://waybound-backend.onrender.com`) for Next.js server-side API proxy rewrites (`/api/v1/:path*`).
+
+4. **`EMAIL_FROM` (Backend Service -> Environment)**:
+   - Configure your verified sender address (e.g., `WAYBOUND <auth@yourdomain.com>`) or the Resend sandbox address (`WAYBOUND <onboarding@resend.dev>`).
+   - Default unverified placeholders (like `auth@waybound.dev`) fail startup validation.
+
+5. **`RESEND_API_KEY` (Backend Service -> Environment)**:
+   - Add your API key from [resend.com/api-keys](https://resend.com/api-keys).
+
+6. **External AI Keys (Backend Service -> Environment, Optional)**:
+   - `GOOGLE_MAPS_API_KEY` & `GEMMA_API_KEY`: Required if setting `QUEST_PROVIDER=google_places_gemma`.
+   - `ELEVENLABS_API_KEY`: Required if setting `ELEVENLABS_ENABLED=true`.
+
+---
+
+### 5. Transactional Email & Resend Domain Verification
 
 In production, WAYBOUND authenticates explorers using email OTPs and rejects the simulated provider:
 
